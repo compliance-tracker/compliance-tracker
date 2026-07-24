@@ -101,9 +101,28 @@ PostgreSQL (business, work_pass, deadline_record)              real AWS prod)   
   redelivered after a prior successful send), calls `NotificationSender` and marks it sent.
   The SQS message is deleted **only after** the DB write succeeds — so a crash mid-processing
   leaves the message in the queue to be retried automatically once SQS's visibility timeout
-  expires, rather than silently losing the reminder. Verified with a real integration test
-  (`ReminderWorkerIntegrationTest`) covering the full sync → dispatch → worker pipeline against
-  real Postgres + real (local) SQS.
+  expires, rather than silently losing the reminder. Each message is processed in its own
+  try/catch so one failing message doesn't block the rest of the batch — a failure is logged
+  and the message is deliberately left undeleted, letting SQS's own retry/dead-letter mechanism
+  (below) take over. Verified with a real integration test (`ReminderWorkerIntegrationTest`)
+  covering the full sync → dispatch → worker pipeline against real Postgres + real (local) SQS.
+- **`SchedulingConfig`** — `@Configuration` holding `@EnableScheduling`, gated behind
+  `scheduling.enabled` (default `true`). Exists so tests can turn scheduling off entirely
+  (`scheduling.enabled=false` in `application-test.properties`, via `@ActiveProfiles("test")`)
+  — without this, `@SpringBootTest` boots the real background jobs, and once
+  `ReminderWorkerService` existed its real poller started racing integration tests for the
+  messages they'd just enqueued, a genuine (not flaky) test failure this fixed.
+
+### Dead-letter handling
+
+The main queue (`compliance-reminders`) has a **redrive policy**: after `maxReceiveCount: 3`
+failed receives (a message repeatedly not deleted, i.e. repeatedly failing in
+`ReminderWorkerService`), SQS automatically moves it to `compliance-reminders-dlq` — no
+application code is involved in the move itself, it's queue configuration. This was manually
+verified against LocalStack (simulating 3 failed receives via `change-message-visibility`,
+confirming the message lands in the DLQ) rather than covered by an automated test, since
+reproducing it end-to-end would mean waiting out real SQS visibility timeouts or adding
+test-only timing hooks not worth the complexity here.
 
 ### Local development: LocalStack
 
@@ -116,13 +135,28 @@ docker run --name compliance-localstack -e SERVICES=sqs -p 4566:4566 -d localsta
 
 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 \
   --region us-east-1 sqs create-queue --queue-name compliance-reminders
+
+# Dead-letter queue + redrive policy (see "Dead-letter handling" above)
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 \
+  --region us-east-1 sqs create-queue --queue-name compliance-reminders-dlq
+
+DLQ_ARN=$(AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 \
+  --region us-east-1 sqs get-queue-attributes \
+  --queue-url http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/compliance-reminders-dlq \
+  --attribute-names QueueArn --query "Attributes.QueueArn" --output text)
+
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 \
+  --region us-east-1 sqs set-queue-attributes \
+  --queue-url http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/compliance-reminders \
+  --attributes "{\"RedrivePolicy\":\"{\\\"deadLetterTargetArn\\\":\\\"$DLQ_ARN\\\",\\\"maxReceiveCount\\\":\\\"3\\\"}\"}"
 ```
 
 ### Planned (not built yet — see [open issues](https://github.com/Chrainx/compliance-tracker/issues))
 
 - **Real notification channel** — replace `LoggingNotificationSender` with an actual email
   (e.g. AWS SES) or SMS provider behind the existing `NotificationSender` interface.
-- **Dead-letter handling** — give up gracefully after N failed delivery attempts.
+- **DLQ monitoring/alerting** — currently, a message that lands in the dead-letter queue is
+  silent; nothing surfaces it. Would need at minimum a way to inspect DLQ depth.
 - **Cloud deployment** — AWS ECS/Fargate + RDS, replacing local Docker Postgres; switch
   `aws.sqs.endpoint` off to use real AWS.
 - **Load testing** — real throughput/latency numbers against the deployed system.
@@ -147,7 +181,8 @@ Requires Java 21, Maven, and Docker.
 docker run --name compliance-postgres -e POSTGRES_PASSWORD=devpassword \
   -e POSTGRES_DB=compliance_tracker -p 5434:5432 -d postgres:16
 
-# 2. Start LocalStack (emulates AWS SQS - see "Local development: LocalStack" below)
+# 2. Start LocalStack (emulates AWS SQS - see "Local development: LocalStack" below for the
+#    full setup including the dead-letter queue)
 docker run --name compliance-localstack -e SERVICES=sqs -p 4566:4566 -d localstack/localstack:3.8.1
 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 \
   --region us-east-1 sqs create-queue --queue-name compliance-reminders
@@ -161,6 +196,11 @@ The app will be available at `http://localhost:8081`.
 If either container was already created in a previous session, `docker start compliance-postgres`
 / `docker start compliance-localstack` instead of `docker run` — otherwise `docker run` will
 fail with a "name already in use" error.
+
+**Note:** LocalStack's queue state is in-memory and does **not** survive a container restart
+(`docker start` after it was stopped) — `docker ps` showing it "Up" doesn't mean the queue still
+exists. Re-run the `create-queue` command (and the DLQ setup below) any time LocalStack was
+previously stopped, even if reusing the same container.
 
 ## API
 
@@ -190,8 +230,10 @@ curl http://localhost:8081/api/businesses/1/deadlines
 
 Requires both Postgres and LocalStack running (see "Running locally" above) —
 `ComplianceTrackerApplicationTests`, `SqsDispatchIntegrationTest`, and
-`ReminderWorkerIntegrationTest` boot the real Spring context and connect to both. The other
-test classes are plain unit tests with no such dependency.
+`ReminderWorkerIntegrationTest` boot the real Spring context and connect to both. All three
+run with the `test` profile active (`scheduling.enabled=false`), so the real background
+`@Scheduled` jobs don't run and race the tests' own explicit calls — see `SchedulingConfig`.
+The other test classes are plain unit tests with no such dependency.
 
 ## Status
 

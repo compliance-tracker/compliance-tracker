@@ -91,4 +91,56 @@ class ReminderWorkerServiceTest {
         verify(notificationSender, never()).send(any(), any());
         verify(sqsClient, times(1)).deleteMessage(any(DeleteMessageRequest.class));
     }
+
+    @Test
+    void failedSend_leavesMessageUndeleted_soSqsCanRetryAndEventuallyDeadLetter() {
+        Business business = new Business();
+        business.setId(1L);
+
+        DeadlineRecord record = new DeadlineRecord();
+        record.setId(10L);
+        record.setBusiness(business);
+        record.setReminderSent(false);
+
+        stubQueueUrlAndReceive(sqsMessageFor(10L));
+        when(deadlineRecordRepository.findById(10L)).thenReturn(Optional.of(record));
+        doThrow(new RuntimeException("simulated notification failure"))
+                .when(notificationSender).send(any(), any());
+
+        worker.pollAndProcess();
+
+        // Not deleted -> stays in the queue, SQS's own visibility timeout + redrive policy
+        // (maxReceiveCount, configured on the queue itself) handles retrying and eventually
+        // moving it to the dead-letter queue after repeated failures - no app code needed for
+        // that part, this just has to not accidentally delete a message that failed.
+        verify(sqsClient, never()).deleteMessage(any(DeleteMessageRequest.class));
+        assertEquals(false, record.isReminderSent());
+    }
+
+    @Test
+    void oneFailingMessage_doesNotBlockProcessingOfOthersInTheSameBatch() {
+        Business business = new Business();
+        business.setId(1L);
+
+        DeadlineRecord failingRecord = new DeadlineRecord();
+        failingRecord.setId(10L);
+        failingRecord.setBusiness(business);
+        failingRecord.setReminderSent(false);
+
+        DeadlineRecord okRecord = new DeadlineRecord();
+        okRecord.setId(20L);
+        okRecord.setBusiness(business);
+        okRecord.setReminderSent(false);
+
+        stubQueueUrlAndReceive(sqsMessageFor(10L), sqsMessageFor(20L));
+        when(deadlineRecordRepository.findById(10L)).thenReturn(Optional.of(failingRecord));
+        when(deadlineRecordRepository.findById(20L)).thenReturn(Optional.of(okRecord));
+        doThrow(new RuntimeException("simulated notification failure"))
+                .when(notificationSender).send(eq(business), eq(failingRecord));
+
+        worker.pollAndProcess();
+
+        assertEquals(true, okRecord.isReminderSent());
+        verify(sqsClient, times(1)).deleteMessage(any(DeleteMessageRequest.class));
+    }
 }

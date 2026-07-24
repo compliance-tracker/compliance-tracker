@@ -69,7 +69,16 @@ public class ReminderWorkerService {
         ).messages();
 
         for (Message message : messages) {
-            processMessage(queueUrl, message);
+            try {
+                processMessage(queueUrl, message);
+            } catch (Exception e) {
+                // Isolate this message's failure so it doesn't stop the rest of the batch from
+                // being processed. Deliberately don't delete the message here - leaving it in
+                // the queue is what lets SQS's own visibility timeout + redrive policy
+                // (maxReceiveCount, set on the queue itself, not in this code) retry it and
+                // eventually route it to the dead-letter queue after repeated failures.
+                log.error("Failed to process reminder message, leaving in queue for retry: {}", message.body(), e);
+            }
         }
     }
 

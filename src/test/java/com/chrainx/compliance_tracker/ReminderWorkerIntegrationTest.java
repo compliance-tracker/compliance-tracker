@@ -3,6 +3,7 @@ package com.chrainx.compliance_tracker;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
 
 import java.time.LocalDate;
 import java.util.Optional;
@@ -13,7 +14,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 // context (real Postgres, real LocalStack SQS). Proves a business with a due-today deadline
 // ends up with reminderSent=true after the worker actually processes the real queue message -
 // not just that each piece works in mocked isolation.
+//
+// @ActiveProfiles("test") disables the real background poller (see SchedulingConfig) so this
+// test's own explicit pollAndProcess() call below is the only thing consuming the queue -
+// otherwise the real scheduled poller could race it and consume the message first.
 @SpringBootTest
+@ActiveProfiles("test")
 class ReminderWorkerIntegrationTest {
 
     @Autowired
