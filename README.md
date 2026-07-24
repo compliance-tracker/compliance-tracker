@@ -25,6 +25,7 @@ business.
 | Database   | PostgreSQL 16 (Docker locally)   |
 | Testing    | JUnit 5 (via `spring-boot-starter-test`) |
 | Queue      | AWS SQS (LocalStack locally/CI, real AWS at deployment) |
+| Migrations | Flyway                           |
 | CI         | GitHub Actions                   |
 | Planned    | AWS ECS/Fargate + RDS (deployment) |
 
@@ -150,6 +151,19 @@ AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://loca
   --queue-url http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/compliance-reminders \
   --attributes "{\"RedrivePolicy\":\"{\\\"deadLetterTargetArn\\\":\\\"$DLQ_ARN\\\",\\\"maxReceiveCount\\\":\\\"3\\\"}\"}"
 ```
+
+### Database migrations: Flyway
+
+Schema changes are managed by Flyway (`src/main/resources/db/migration/`), not
+`spring.jpa.hibernate.ddl-auto`. `ddl-auto` is set to `validate` — Hibernate checks the DB
+schema matches the `@Entity` classes at startup and fails loudly if not, but never mutates
+the schema itself. `update` was convenient for early solo dev but unsafe against a database
+with real data (e.g. renaming a field could silently drop a column) — this had to change
+before real deployment (issue #7).
+
+**Note:** Spring Boot 4 split per-technology autoconfiguration into separate starters — plain
+`flyway-core` on the classpath is no longer enough to trigger Flyway's autoconfiguration; it
+needs the dedicated `spring-boot-starter-flyway` module (see `pom.xml`).
 
 ### Planned (not built yet — see [open issues](https://github.com/Chrainx/compliance-tracker/issues))
 
