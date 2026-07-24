@@ -30,16 +30,16 @@ business.
 ## Architecture (current)
 
 ```
-Client (curl / browser)      @Scheduled 01:00          @Scheduled 01:15
-        │                            │                         │
-        ▼                            ▼                         ▼
-BusinessController          DeadlineSyncService  ──────►  SqsDispatchService
-        │        │                   │      │                   │      │
-        ▼        ▼                   ▼      ▼                   ▼      ▼
-BusinessRepository  RuleEngine ◄─────┘   DeadlineRecordRepository   AWS SQS
-        │          (pure logic, no DB/HTTP dependency)   │        (LocalStack locally,
-        ▼                                                 ▼         real AWS in prod)
-PostgreSQL   (business, work_pass, deadline_record tables)
+Client (curl/browser)   @Scheduled 01:00      @Scheduled 01:15         poll every 30s
+        │                       │                    │                        │
+        ▼                       ▼                    ▼                        ▼
+BusinessController      DeadlineSyncService ───► SqsDispatchService      ReminderWorkerService
+    │        │                 │      │                  │       │            │        │
+    ▼        ▼                 ▼      ▼                  ▼       ▼            ▼        ▼
+BusinessRepo  RuleEngine ◄──────┘   DeadlineRecordRepo ◄──────────┴── AWS SQS ─┘   NotificationSender
+    │        (pure logic,                  │                    (LocalStack           │
+    ▼         no DB/HTTP dep)              ▼                     locally,             ▼
+PostgreSQL (business, work_pass, deadline_record)              real AWS prod)   (logs only for now)
 ```
 
 - **`Business`** — entity representing an SME and the parameters its compliance deadlines are
@@ -83,10 +83,26 @@ PostgreSQL   (business, work_pass, deadline_record tables)
 - **`SqsDispatchService`** — `@Service` with a `@Scheduled` method (`scheduledDispatch`, daily at
   01:15, 15 minutes after the sync job) that calls `findDueSoonAndUnreminded`, serializes each
   result to JSON via Jackson, and sends it as an SQS message. Deliberately does **not** mark
-  `reminderSent` — that only happens in the worker (issue #13) after a reminder is actually sent
+  `reminderSent` — that only happens in the worker, below, after a reminder is actually sent
   successfully, so a lost/failed message can still be retried rather than silently skipped.
   Verified with a real integration test (`SqsDispatchIntegrationTest`) that boots the full app
   and confirms a message actually lands in a real SQS queue (LocalStack locally).
+- **`NotificationSender`** — interface for "how a reminder actually reaches a business."
+  Kept separate from the worker so a real channel (email via AWS SES, SMS, etc.) can be swapped
+  in later without touching the queue-consuming/idempotency logic.
+- **`LoggingNotificationSender`** — the only implementation so far: logs the reminder instead
+  of really sending one. No email provider is wired up yet — flagged here as a real scope gap,
+  not a silently-cut corner. The rest of the pipeline is genuinely end-to-end functional with
+  this as a stand-in.
+- **`ReminderWorkerService`** — `@Service`, polls SQS every 30s (`pollAndProcess`,
+  `@Scheduled(fixedDelay = 30_000)`). For each message: looks up the `DeadlineRecord`, and if
+  it's not already `reminderSent` (the actual idempotency check — handles a message being
+  redelivered after a prior successful send), calls `NotificationSender` and marks it sent.
+  The SQS message is deleted **only after** the DB write succeeds — so a crash mid-processing
+  leaves the message in the queue to be retried automatically once SQS's visibility timeout
+  expires, rather than silently losing the reminder. Verified with a real integration test
+  (`ReminderWorkerIntegrationTest`) covering the full sync → dispatch → worker pipeline against
+  real Postgres + real (local) SQS.
 
 ### Local development: LocalStack
 
@@ -103,8 +119,8 @@ AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://loca
 
 ### Planned (not built yet — see [open issues](https://github.com/Chrainx/compliance-tracker/issues))
 
-- **Worker + idempotency** — consume the SQS queue, send the actual notification, mark
-  `reminderSent` only after a confirmed successful send (no duplicate sends on retry).
+- **Real notification channel** — replace `LoggingNotificationSender` with an actual email
+  (e.g. AWS SES) or SMS provider behind the existing `NotificationSender` interface.
 - **Dead-letter handling** — give up gracefully after N failed delivery attempts.
 - **Cloud deployment** — AWS ECS/Fargate + RDS, replacing local Docker Postgres; switch
   `aws.sqs.endpoint` off to use real AWS.
