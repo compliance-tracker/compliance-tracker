@@ -2,8 +2,9 @@
 
 A compliance deadline tracker for Singapore SMEs. Tracks obligations like ACRA Annual Return,
 GST filing, and work pass renewals, computes each business's actual due dates from its own
-parameters (e.g. Financial Year End), and (eventually) sends automated reminder notifications
-ahead of each deadline.
+parameters (e.g. Financial Year End), and dispatches automated reminders ahead of each deadline
+via a scheduled sync → SQS queue → worker pipeline. The actual notification channel (email/SMS)
+isn't wired up yet — reminders currently land as log output via a stand-in `NotificationSender`.
 
 > **Disclaimer:** This is a reminder/tracking tool, not compliance advice. It is not a
 > substitute for consulting a qualified accountant or company secretary. Deadline rules are
@@ -188,9 +189,9 @@ curl http://localhost:8081/api/businesses/1/deadlines
 ```
 
 Requires both Postgres and LocalStack running (see "Running locally" above) —
-`ComplianceTrackerApplicationTests` and `SqsDispatchIntegrationTest` boot the real Spring
-context and connect to both. The other test classes are plain unit tests with no such
-dependency.
+`ComplianceTrackerApplicationTests`, `SqsDispatchIntegrationTest`, and
+`ReminderWorkerIntegrationTest` boot the real Spring context and connect to both. The other
+test classes are plain unit tests with no such dependency.
 
 ## Status
 
