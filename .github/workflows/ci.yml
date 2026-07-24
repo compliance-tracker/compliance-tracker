@@ -24,6 +24,21 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+      # Pinned to 3.8.1 - newer LocalStack versions require a paid license/auth token even
+      # for SQS, which the free community tier doesn't have (see SqsDispatchIntegrationTest,
+      # which needs a real queue to send/receive against).
+      localstack:
+        image: localstack/localstack:3.8.1
+        env:
+          SERVICES: sqs
+        ports:
+          - 4566:4566
+        options: >-
+          --health-cmd "curl -f http://localhost:4566/_localstack/health"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -34,6 +49,12 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
           cache: maven
+
+      - name: Create SQS queue in LocalStack
+        run: >
+          AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test
+          aws --endpoint-url=http://localhost:4566 --region us-east-1
+          sqs create-queue --queue-name compliance-reminders
 
       - name: Build
         run: ./mvnw -B compile

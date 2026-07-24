@@ -29,15 +29,15 @@ business.
 ## Architecture (current)
 
 ```
-Client (curl / browser)                    @Scheduled (daily, 01:00)
-        │                                           │
-        ▼                                           ▼
-BusinessController   (REST layer)          DeadlineSyncService
-        │              │                            │      │
-        ▼              ▼                            ▼      ▼
-BusinessRepository   RuleEngine  ◄──────────────────┘   DeadlineRecordRepository
-        │            (pure logic, no DB/HTTP dependency)         │
-        ▼                                                        ▼
+Client (curl / browser)      @Scheduled 01:00          @Scheduled 01:15
+        │                            │                         │
+        ▼                            ▼                         ▼
+BusinessController          DeadlineSyncService  ──────►  SqsDispatchService
+        │        │                   │      │                   │      │
+        ▼        ▼                   ▼      ▼                   ▼      ▼
+BusinessRepository  RuleEngine ◄─────┘   DeadlineRecordRepository   AWS SQS
+        │          (pure logic, no DB/HTTP dependency)   │        (LocalStack locally,
+        ▼                                                 ▼         real AWS in prod)
 PostgreSQL   (business, work_pass, deadline_record tables)
 ```
 
@@ -70,15 +70,43 @@ PostgreSQL   (business, work_pass, deadline_record tables)
   01:00) that recomputes every business's deadlines from scratch via `RuleEngine` each run and
   persists any not already stored, skipping ones that already exist so `reminderSent` isn't
   reset. Also exposes `findDueSoonAndUnreminded(referenceDate, daysAhead)`, which the dispatch
-  step ([issue #12](https://github.com/Chrainx/compliance-tracker/issues/12)) will call next to
-  decide what actually gets pushed to the reminder queue.
+  step (`SqsDispatchService`) calls next to decide what actually gets pushed to the reminder
+  queue.
+- **`SqsConfig`** — `@Configuration` producing a single `SqsClient` `@Bean`. When
+  `aws.sqs.endpoint` is set (local dev), it points the client at LocalStack with throwaway
+  credentials; when unset (real AWS deployment), it falls back to the SDK's default credential
+  chain and endpoint resolution — same code, no branching logic needed to switch environments.
+- **`ReminderMessage`** — a Java `record` (concise immutable data class — auto-generates
+  constructor/getters/equals/hashCode) representing one reminder's JSON payload:
+  `deadlineRecordId`, `businessId`, `obligationType`, `dueDate`.
+- **`SqsDispatchService`** — `@Service` with a `@Scheduled` method (`scheduledDispatch`, daily at
+  01:15, 15 minutes after the sync job) that calls `findDueSoonAndUnreminded`, serializes each
+  result to JSON via Jackson, and sends it as an SQS message. Deliberately does **not** mark
+  `reminderSent` — that only happens in the worker (issue #13) after a reminder is actually sent
+  successfully, so a lost/failed message can still be retried rather than silently skipped.
+  Verified with a real integration test (`SqsDispatchIntegrationTest`) that boots the full app
+  and confirms a message actually lands in a real SQS queue (LocalStack locally).
+
+### Local development: LocalStack
+
+No AWS account is needed for local dev. [LocalStack](https://www.localstack.cloud/) emulates
+SQS on your machine — CI runs the same way. Pinned to `3.8.1`: newer LocalStack versions require
+a paid license/auth token even for SQS on the free tier.
+
+```bash
+docker run --name compliance-localstack -e SERVICES=sqs -p 4566:4566 -d localstack/localstack:3.8.1
+
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 \
+  --region us-east-1 sqs create-queue --queue-name compliance-reminders
+```
 
 ### Planned (not built yet — see [open issues](https://github.com/Chrainx/compliance-tracker/issues))
 
-- **Queue dispatch** — push due-soon, unreminded deadlines onto AWS SQS; a worker consumes the
-  queue and sends notifications, with idempotency (no duplicate sends on retry) and dead-letter
-  handling (give up gracefully after N failures).
-- **Cloud deployment** — AWS ECS/Fargate + RDS, replacing local Docker Postgres.
+- **Worker + idempotency** — consume the SQS queue, send the actual notification, mark
+  `reminderSent` only after a confirmed successful send (no duplicate sends on retry).
+- **Dead-letter handling** — give up gracefully after N failed delivery attempts.
+- **Cloud deployment** — AWS ECS/Fargate + RDS, replacing local Docker Postgres; switch
+  `aws.sqs.endpoint` off to use real AWS.
 - **Load testing** — real throughput/latency numbers against the deployed system.
 
 ### Compliance rules
