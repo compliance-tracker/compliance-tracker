@@ -23,8 +23,9 @@ business.
 | Build tool | Maven                            |
 | Database   | PostgreSQL 16 (Docker locally)   |
 | Testing    | JUnit 5 (via `spring-boot-starter-test`) |
+| Queue      | AWS SQS (LocalStack locally/CI, real AWS at deployment) |
 | CI         | GitHub Actions                   |
-| Planned    | AWS SQS (job queue), AWS ECS/Fargate + RDS (deployment) |
+| Planned    | AWS ECS/Fargate + RDS (deployment) |
 
 ## Architecture (current)
 
@@ -129,11 +130,20 @@ Requires Java 21, Maven, and Docker.
 docker run --name compliance-postgres -e POSTGRES_PASSWORD=devpassword \
   -e POSTGRES_DB=compliance_tracker -p 5434:5432 -d postgres:16
 
-# 2. Run the app (custom port 8081)
+# 2. Start LocalStack (emulates AWS SQS - see "Local development: LocalStack" below)
+docker run --name compliance-localstack -e SERVICES=sqs -p 4566:4566 -d localstack/localstack:3.8.1
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 \
+  --region us-east-1 sqs create-queue --queue-name compliance-reminders
+
+# 3. Run the app (custom port 8081)
 ./mvnw spring-boot:run
 ```
 
 The app will be available at `http://localhost:8081`.
+
+If either container was already created in a previous session, `docker start compliance-postgres`
+/ `docker start compliance-localstack` instead of `docker run` — otherwise `docker run` will
+fail with a "name already in use" error.
 
 ## API
 
@@ -160,6 +170,11 @@ curl http://localhost:8081/api/businesses/1/deadlines
 ```bash
 ./mvnw test
 ```
+
+Requires both Postgres and LocalStack running (see "Running locally" above) —
+`ComplianceTrackerApplicationTests` and `SqsDispatchIntegrationTest` boot the real Spring
+context and connect to both. The other test classes are plain unit tests with no such
+dependency.
 
 ## Status
 
