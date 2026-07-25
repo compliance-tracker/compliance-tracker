@@ -31,6 +31,9 @@ class SqsDispatchIntegrationTest {
     private BusinessRepository businessRepository;
 
     @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
     private DeadlineSyncService deadlineSyncService;
 
     @Autowired
@@ -44,11 +47,17 @@ class SqsDispatchIntegrationTest {
 
     @Test
     void businessWithDeadlineDueToday_producesRealSqsMessage() {
+        User owner = new User();
+        owner.setEmail("sqs-dispatch-test-" + System.nanoTime() + "@example.com");
+        owner.setPasswordHash("unused-in-this-test");
+        userRepository.save(owner);
+
         Business business = new Business();
         business.setName("Integration Test Co");
         // ACRA rule is financialYearEnd + 7 months, so this makes today the ACRA due date.
         business.setFinancialYearEnd(LocalDate.now().minusMonths(7));
         business.setGstRegistered(false);
+        business.setOwner(owner);
         businessRepository.save(business);
 
         deadlineSyncService.syncDeadlines();

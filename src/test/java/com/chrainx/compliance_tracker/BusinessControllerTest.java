@@ -19,12 +19,24 @@ import static org.mockito.Mockito.when;
 // Plain unit test - no Spring context/DB involved, so it stays fast. The controller is
 // instantiated directly with mocked repositories (Mockito) and a real RuleEngine, since
 // RuleEngine is pure logic anyway and cheap to use as-is.
+//
+// currentUser below stands in for what @AuthenticationPrincipal would inject at runtime -
+// since these are plain unit tests calling controller methods directly (no real HTTP request,
+// no real JwtAuthenticationFilter involved), we just construct a User and pass it as the
+// method argument ourselves.
 class BusinessControllerTest {
 
     private final BusinessRepository businessRepository = mock(BusinessRepository.class);
     private final WorkPassRepository workPassRepository = mock(WorkPassRepository.class);
     private final RuleEngine ruleEngine = new RuleEngine();
     private final BusinessController controller = new BusinessController(businessRepository, workPassRepository, ruleEngine);
+
+    private final User currentUser = new User();
+
+    BusinessControllerTest() {
+        currentUser.setId(1L);
+        currentUser.setEmail("owner@example.com");
+    }
 
     @Test
     void getDeadlines_returnsComputedDeadlines_forExistingBusiness() {
@@ -33,10 +45,10 @@ class BusinessControllerTest {
         business.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
         business.setGstRegistered(true);
 
-        when(businessRepository.findById(1L)).thenReturn(Optional.of(business));
+        when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(business));
         when(workPassRepository.findByBusinessId(1L)).thenReturn(Collections.emptyList());
 
-        ResponseEntity<List<Deadline>> response = controller.getDeadlines(1L);
+        ResponseEntity<List<Deadline>> response = controller.getDeadlines(1L, currentUser);
 
         assertEquals(200, response.getStatusCode().value());
         assertTrue(response.getBody().stream()
@@ -45,9 +57,22 @@ class BusinessControllerTest {
 
     @Test
     void getDeadlines_returns404_whenBusinessNotFound() {
-        when(businessRepository.findById(99L)).thenReturn(Optional.empty());
+        when(businessRepository.findByIdAndOwnerId(99L, 1L)).thenReturn(Optional.empty());
 
-        ResponseEntity<List<Deadline>> response = controller.getDeadlines(99L);
+        ResponseEntity<List<Deadline>> response = controller.getDeadlines(99L, currentUser);
+
+        assertEquals(404, response.getStatusCode().value());
+    }
+
+    @Test
+    void getDeadlines_returns404_whenBusinessBelongsToAnotherUser() {
+        // findByIdAndOwnerId with the *current* user's ID returns empty even though the
+        // business exists - because it belongs to someone else. This is the actual ownership
+        // enforcement: a business that exists but isn't yours is indistinguishable from one
+        // that doesn't exist at all.
+        when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.empty());
+
+        ResponseEntity<List<Deadline>> response = controller.getDeadlines(1L, currentUser);
 
         assertEquals(404, response.getStatusCode().value());
     }
@@ -62,13 +87,36 @@ class BusinessControllerTest {
         WorkPass pass = new WorkPass();
         pass.setExpiryDate(LocalDate.of(2026, 11, 1));
 
-        when(businessRepository.findById(1L)).thenReturn(Optional.of(business));
+        when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(business));
         when(workPassRepository.findByBusinessId(1L)).thenReturn(List.of(pass));
 
-        ResponseEntity<List<Deadline>> response = controller.getDeadlines(1L);
+        ResponseEntity<List<Deadline>> response = controller.getDeadlines(1L, currentUser);
 
         assertTrue(response.getBody().stream()
                 .anyMatch(d -> d.getObligationType() == ObligationType.WORK_PASS_RENEWAL
                         && d.getDueDate().equals(LocalDate.of(2026, 11, 1))));
+    }
+
+    @Test
+    void createBusiness_setsOwnerToCurrentUser() {
+        Business business = new Business();
+        business.setName("Test Co");
+
+        when(businessRepository.save(business)).thenReturn(business);
+
+        controller.createBusiness(business, currentUser);
+
+        assertEquals(currentUser, business.getOwner());
+    }
+
+    @Test
+    void getAllBusinesses_returnsOnlyCurrentUsersBusinesses() {
+        Business business = new Business();
+        business.setId(1L);
+        when(businessRepository.findByOwnerId(1L)).thenReturn(List.of(business));
+
+        List<Business> result = controller.getAllBusinesses(currentUser);
+
+        assertEquals(1, result.size());
     }
 }

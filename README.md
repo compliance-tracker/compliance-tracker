@@ -26,22 +26,33 @@ business.
 | Testing    | JUnit 5 (via `spring-boot-starter-test`) |
 | Queue      | AWS SQS (LocalStack locally/CI, real AWS at deployment) |
 | Migrations | Flyway                           |
+| Auth       | Spring Security + JWT (`jjwt`)   |
 | CI         | GitHub Actions                   |
 | Planned    | AWS ECS/Fargate + RDS (deployment) |
 
 ## Architecture (current)
 
 ```
-Client (curl/browser)   @Scheduled 01:00      @Scheduled 01:15         poll every 30s
-        │                       │                    │                        │
-        ▼                       ▼                    ▼                        ▼
-BusinessController      DeadlineSyncService ───► SqsDispatchService      ReminderWorkerService
-    │        │                 │      │                  │       │            │        │
-    ▼        ▼                 ▼      ▼                  ▼       ▼            ▼        ▼
-BusinessRepo  RuleEngine ◄──────┘   DeadlineRecordRepo ◄──────────┴── AWS SQS ─┘   NotificationSender
-    │        (pure logic,                  │                    (LocalStack           │
-    ▼         no DB/HTTP dep)              ▼                     locally,             ▼
-PostgreSQL (business, work_pass, deadline_record)              real AWS prod)   (logs only for now)
+Client (curl/browser)
+        │
+        ├──► AuthController ──► JwtService / PasswordEncoder ──► User / app_user table
+        │         (register/login, no token required)
+        │
+        │  Authorization: Bearer <token>
+        ▼
+JwtAuthenticationFilter ──► SecurityConfig (401 if missing/invalid)
+        │
+        ▼                       @Scheduled 01:00      @Scheduled 01:15         poll every 30s
+BusinessController                     │                    │                        │
+(scoped to caller's own                ▼                    ▼                        ▼
+ businesses only)              DeadlineSyncService ───► SqsDispatchService      ReminderWorkerService
+    │        │                       │      │                  │       │            │        │
+    ▼        ▼                       ▼      ▼                  ▼       ▼            ▼        ▼
+BusinessRepo  RuleEngine ◄────────────┘   DeadlineRecordRepo ◄──────────┴── AWS SQS ─┘   NotificationSender
+    │        (pure logic,                        │                    (LocalStack           │
+    ▼         no DB/HTTP dep)                    ▼                     locally,             ▼
+PostgreSQL (app_user, business, work_pass,     real AWS prod)   (logs only for now)
+            deadline_record)
 ```
 
 - **`Business`** — entity representing an SME and the parameters its compliance deadlines are
@@ -114,6 +125,40 @@ PostgreSQL (business, work_pass, deadline_record)              real AWS prod)   
   `ReminderWorkerService` existed its real poller started racing integration tests for the
   messages they'd just enqueued, a genuine (not flaky) test failure this fixed.
 
+### Authentication
+
+- **`User`** — entity for a registered account (`email`, `passwordHash`). Table name is
+  `app_user`, not `user` — a reserved word in Postgres.
+- **`Business.owner`** — every business now belongs to exactly one `User`
+  (`@ManyToOne`, `@JsonIgnore` so the owner — including their password hash — never gets
+  serialized into an API response).
+- **`JwtService`** — generates and verifies signed tokens (HMAC-SHA256, via `jjwt`). A JWT's
+  payload (the user's email) is readable by anyone, not encrypted — the signature is what
+  makes it trustworthy, since only the server holding the signing secret can produce one that
+  verifies.
+- **`JwtAuthenticationFilter`** — runs once per request, reads `Authorization: Bearer <token>`,
+  and if valid, populates Spring Security's context with the corresponding `User` as the
+  authenticated principal.
+- **`SecurityConfig`** — stateless (`SessionCreationPolicy.STATELESS`, no cookies/sessions at
+  all), CSRF disabled (irrelevant for a token-based API), `/hello` and `/api/auth/**` open,
+  everything else requires a valid token. Returns `401` (not Spring Security's 403 default) for
+  missing/invalid auth via a custom `AuthenticationEntryPoint`.
+- **`AuthController`** — `POST /api/auth/register` and `POST /api/auth/login`, both returning
+  a JWT. Passwords are hashed with BCrypt, never stored or compared in plain text. Login
+  returns the same `401` whether the email doesn't exist or the password is wrong — revealing
+  which one it was would let an attacker enumerate registered emails.
+- **`BusinessController`** — every method now scopes to `@AuthenticationPrincipal User`:
+  `createBusiness` sets the owner automatically; `getAllBusinesses`/`getDeadlines` only
+  ever return the current user's own businesses (`findByOwnerId`/`findByIdAndOwnerId`). A
+  business that exists but belongs to someone else returns a plain `404`, not `403` —
+  confirming "this ID exists, it's just not yours" leaks more than a flat "not found."
+
+Verified two ways: `BusinessControllerTest`/`AuthControllerTest`/`JwtServiceTest` at the Java
+method level (mocked dependencies), and `AuthIntegrationTest` at the real HTTP level (boots the
+actual app, makes real requests via `TestRestTemplate`) — the latter is what actually proves
+`SecurityConfig`'s rules work, since calling a controller method directly bypasses the security
+filter chain entirely.
+
 ### Dead-letter handling
 
 The main queue (`compliance-reminders`) has a **redrive policy**: after `maxReceiveCount: 3`
@@ -171,6 +216,9 @@ needs the dedicated `spring-boot-starter-flyway` module (see `pom.xml`).
   (e.g. AWS SES) or SMS provider behind the existing `NotificationSender` interface.
 - **DLQ monitoring/alerting** — currently, a message that lands in the dead-letter queue is
   silent; nothing surfaces it. Would need at minimum a way to inspect DLQ depth.
+- **Input validation** — `spring-boot-starter-validation` has been a dependency since day one
+  but is never actually used; no `@Valid` annotations exist anywhere yet.
+- **API documentation** (OpenAPI/Swagger) — currently only this manually-maintained table below.
 - **Cloud deployment** — AWS ECS/Fargate + RDS, replacing local Docker Postgres; switch
   `aws.sqs.endpoint` off to use real AWS.
 - **Load testing** — real throughput/latency numbers against the deployed system.
@@ -218,21 +266,27 @@ previously stopped, even if reusing the same container.
 
 ## API
 
-| Method | Path                          | Description                                |
-|--------|-------------------------------|---------------------------------------------|
-| GET    | `/hello`                      | Smoke-test endpoint                         |
-| POST   | `/api/businesses`             | Create a business                           |
-| GET    | `/api/businesses`             | List all businesses                         |
-| GET    | `/api/businesses/{id}/deadlines` | Compute and return that business's current compliance deadlines |
+| Method | Path                          | Auth required | Description                    |
+|--------|-------------------------------|----------------|---------------------------------|
+| GET    | `/hello`                      | No             | Smoke-test endpoint             |
+| POST   | `/api/auth/register`          | No             | Create an account, returns a JWT |
+| POST   | `/api/auth/login`              | No             | Returns a JWT for an existing account |
+| POST   | `/api/businesses`             | Yes            | Create a business, owned by the caller |
+| GET    | `/api/businesses`             | Yes            | List the caller's own businesses (not everyone's) |
+| GET    | `/api/businesses/{id}/deadlines` | Yes         | Compute and return that business's deadlines — 404 if it doesn't exist or isn't yours |
 
-Example:
+Example (register, then use the returned token for everything else):
 
 ```bash
-curl -X POST http://localhost:8081/api/businesses \
+TOKEN=$(curl -s -X POST http://localhost:8081/api/auth/register \
   -H "Content-Type: application/json" \
+  -d '{"email": "you@example.com", "password": "a-real-password"}' | jq -r .token)
+
+curl -X POST http://localhost:8081/api/businesses \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
   -d '{"name": "Test Cafe Pte Ltd", "financialYearEnd": "2026-12-31", "gstRegistered": true}'
 
-curl http://localhost:8081/api/businesses/1/deadlines
+curl http://localhost:8081/api/businesses/1/deadlines -H "Authorization: Bearer $TOKEN"
 # [{"obligationType":"ACRA_ANNUAL_RETURN","dueDate":"2027-07-31"},{"obligationType":"GST_F5","dueDate":"2026-10-30"}]
 ```
 
@@ -243,11 +297,12 @@ curl http://localhost:8081/api/businesses/1/deadlines
 ```
 
 Requires both Postgres and LocalStack running (see "Running locally" above) —
-`ComplianceTrackerApplicationTests`, `SqsDispatchIntegrationTest`, and
-`ReminderWorkerIntegrationTest` boot the real Spring context and connect to both. All three
-run with the `test` profile active (`scheduling.enabled=false`), so the real background
-`@Scheduled` jobs don't run and race the tests' own explicit calls — see `SchedulingConfig`.
-The other test classes are plain unit tests with no such dependency.
+`ComplianceTrackerApplicationTests`, `SqsDispatchIntegrationTest`, `ReminderWorkerIntegrationTest`,
+and `AuthIntegrationTest` boot the real Spring context and connect to both. All run with the
+`test` profile active (`scheduling.enabled=false`), so the real background `@Scheduled` jobs
+don't run and race the tests' own explicit calls — see `SchedulingConfig`. The other test
+classes (including `AuthControllerTest`, `JwtServiceTest`) are plain unit tests with no such
+dependency.
 
 ## Status
 

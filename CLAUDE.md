@@ -10,6 +10,7 @@ covers backend/Java-specific details.
 - **Build tool:** Maven
 - **Database:** PostgreSQL 16 (Docker locally), schema managed by **Flyway** migrations (`src/main/resources/db/migration/`) — not `ddl-auto`
 - **Queue:** AWS SQS — LocalStack locally/CI, real AWS at deployment
+- **Auth:** Spring Security + JWT (stateless, `jjwt` library — chose JWT over session cookies since the frontend is a separate origin/app, not server-rendered)
 - **Deployed later:** AWS ECS/Fargate + RDS (not done yet — blocked on having an AWS account)
 
 ## Current environment (macOS)
@@ -40,6 +41,9 @@ See `README.md` in this folder for the exact commands (Postgres, LocalStack, DLQ
 - **`gh` CLI auth needs scopes added as they come up** — the default token only has `repo`/`read:org`/`gist`. Creating a GitHub Project needed `project` added (`gh auth refresh -h github.com -s project`), deleting a repo needed `delete_repo`. Each is a device-code flow requiring the user to approve in a browser — can't be done silently.
 - **AWS CLI against LocalStack needs dummy credentials present** (`AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test`) even though LocalStack doesn't actually check them — the CLI itself refuses to run with none configured at all.
 - **This repo moved GitHub ownership**: originally `Chrainx/compliance-tracker`, transferred to the `compliance-tracker` organization (see root CLAUDE.md). Local remote was updated (`git remote set-url origin ...`) — if a stale remote URL ever causes push/fetch confusion, that's why.
+- **Spring Security's default rejection status is 403, not 401**, for a request with no authentication at all — needs an explicit `AuthenticationEntryPoint` (see `SecurityConfig`) to get the semantically-correct 401. Don't assume the default is right without checking.
+- **`TestRestTemplate` moved out of `spring-boot-starter-test` in Spring Boot 4** — separate module (`spring-boot-resttestclient` + `spring-boot-restclient`, both needed), new package (`org.springframework.boot.resttestclient.TestRestTemplate`), and `@SpringBootTest` no longer auto-provides it — needs `@AutoConfigureTestRestTemplate` explicitly. Third Spring Boot 4 modularization surprise this project has hit (after Jackson's package rename and Flyway's starter requirement) — the pattern now: if something that used to "just work" silently doesn't, check whether it moved to its own module before assuming the code is wrong.
+- **`@JsonIgnore` matters on any entity relationship that could reach sensitive data** — `Business.owner` (a `User`, which has a password hash) would otherwise get serialized straight into API responses. Caught this while building auth, before it shipped as a bug, not after.
 
 ## Running end-to-end tests / live checks
 
@@ -47,8 +51,10 @@ For actually driving the running app in a browser (not just `./mvnw test`), `chr
 
 ## Project status
 
-Issues #1–4, #7–16 are closed (rules engine, REST API, full reminder pipeline with SQS dispatch/worker/idempotency/dead-letter handling, Flyway migrations, CORS). Note: #3 was actually done ages ago but left open by oversight — closed retroactively; watch for this kind of drift.
+Issues #1–4, #7–16, #19 are closed (rules engine, REST API, full reminder pipeline with SQS dispatch/worker/idempotency/dead-letter handling, Flyway migrations, CORS, auth + multi-tenancy). Note: #3 was actually done ages ago but left open by oversight — closed retroactively; watch for this kind of drift.
 
-Open: **#5** (deploy to real AWS) and **#6** (load testing) — both blocked pending an AWS account (still pending). Also open: **#17** (real notification channel, replace the logging stand-in), **#18** (DLQ monitoring/alerting), **#19** (auth + multi-tenancy — real gap, currently anyone can see/edit any business), **#20** (input validation — `spring-boot-starter-validation` has been a dependency since day one but never actually used), **#21** (API docs/OpenAPI).
+**Auth (#19) just shipped**: real accounts (register/login), JWT-based, every `Business` scoped to its owner, enforced at the API level (not just hidden in the UI). Existing test businesses were deleted as part of this (they had no owner concept, couldn't be migrated forward) — a fresh `app_user` table backs everything now.
+
+Open: **#5** (deploy to real AWS) and **#6** (load testing) — both blocked pending an AWS account (still pending). Also open: **#17** (real notification channel, replace the logging stand-in), **#18** (DLQ monitoring/alerting), **#20** (input validation — `spring-boot-starter-validation` has been a dependency since day one but never actually used), **#21** (API docs/OpenAPI).
 
 See `README.md` and GitHub issues for full detail; don't duplicate that detail here.

@@ -1,5 +1,6 @@
 package com.chrainx.compliance_tracker;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import java.time.LocalDate;
 
@@ -16,6 +17,14 @@ public class Business {
 
     private boolean gstRegistered;
 
+    // FetchType.LAZY + @JsonIgnore: the owning User (including their password hash) must never
+    // be serialized into an API response - the frontend has no need to see it, and leaking a
+    // password hash through a JSON response would be a real security bug, not just untidy.
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "owner_id")
+    @JsonIgnore
+    private User owner;
+
     // Getters and setters — Spring/Hibernate needs these to read/write fields
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -28,4 +37,7 @@ public class Business {
 
     public boolean isGstRegistered() { return gstRegistered; }
     public void setGstRegistered(boolean gstRegistered) { this.gstRegistered = gstRegistered; }
+
+    public User getOwner() { return owner; }
+    public void setOwner(User owner) { this.owner = owner; }
 }
