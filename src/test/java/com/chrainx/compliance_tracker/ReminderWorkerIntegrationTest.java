@@ -26,6 +26,9 @@ class ReminderWorkerIntegrationTest {
     private BusinessRepository businessRepository;
 
     @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
     private DeadlineSyncService deadlineSyncService;
 
     @Autowired
@@ -39,10 +42,16 @@ class ReminderWorkerIntegrationTest {
 
     @Test
     void fullPipeline_syncThenDispatchThenWorker_marksReminderSent() {
+        User owner = new User();
+        owner.setEmail("reminder-worker-test-" + System.nanoTime() + "@example.com");
+        owner.setPasswordHash("unused-in-this-test");
+        userRepository.save(owner);
+
         Business business = new Business();
         business.setName("Worker Integration Test Co");
         business.setFinancialYearEnd(LocalDate.now().minusMonths(7));
         business.setGstRegistered(false);
+        business.setOwner(owner);
         businessRepository.save(business);
 
         deadlineSyncService.syncDeadlines();

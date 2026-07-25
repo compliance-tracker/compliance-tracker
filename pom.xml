@@ -62,6 +62,33 @@
 		</dependency>
 
 		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-security</artifactId>
+		</dependency>
+
+		<!-- JWT: split into api (compile-time, what our code imports) + impl/gson (runtime only,
+		     the actual implementation). jjwt-gson rather than jjwt-jackson deliberately - avoids
+		     any interaction with Spring Boot 4.1's Jackson 3 (tools.jackson.*) migration, since
+		     jjwt's own JSON serialization is entirely internal and unrelated to our API's JSON. -->
+		<dependency>
+			<groupId>io.jsonwebtoken</groupId>
+			<artifactId>jjwt-api</artifactId>
+			<version>0.13.0</version>
+		</dependency>
+		<dependency>
+			<groupId>io.jsonwebtoken</groupId>
+			<artifactId>jjwt-impl</artifactId>
+			<version>0.13.0</version>
+			<scope>runtime</scope>
+		</dependency>
+		<dependency>
+			<groupId>io.jsonwebtoken</groupId>
+			<artifactId>jjwt-gson</artifactId>
+			<version>0.13.0</version>
+			<scope>runtime</scope>
+		</dependency>
+
+		<dependency>
 			<groupId>org.postgresql</groupId>
 			<artifactId>postgresql</artifactId>
 			<scope>runtime</scope>
@@ -83,6 +110,21 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+
+		<!-- Spring Boot 4 stopped auto-providing TestRestTemplate via @SpringBootTest, and moved
+		     it out of spring-boot-starter-test into its own module (also renamed package:
+		     org.springframework.boot.resttestclient.TestRestTemplate). Both deps are needed -
+		     spring-boot-resttestclient alone doesn't transitively pull in spring-boot-restclient. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-resttestclient</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-restclient</artifactId>
 			<scope>test</scope>
 		</dependency>
 

@@ -4,6 +4,7 @@ import com.chrainx.compliance_tracker.rules.Deadline;
 import com.chrainx.compliance_tracker.rules.RuleEngine;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -32,22 +33,31 @@ public class BusinessController {
         this.ruleEngine = ruleEngine;
     }
 
+    // @AuthenticationPrincipal: injects whatever JwtAuthenticationFilter put into the
+    // SecurityContext as the authenticated principal - which we set to the actual User entity,
+    // so this parameter just is the logged-in user, no extra lookup needed here.
     @PostMapping
-    public Business createBusiness(@RequestBody Business business) {
+    public Business createBusiness(@RequestBody Business business, @AuthenticationPrincipal User currentUser) {
+        business.setOwner(currentUser);
         return businessRepository.save(business);
     }
 
     @GetMapping
-    public List<Business> getAllBusinesses() {
-        return businessRepository.findAll();
+    public List<Business> getAllBusinesses(@AuthenticationPrincipal User currentUser) {
+        return businessRepository.findByOwnerId(currentUser.getId());
     }
 
     // @PathVariable: pulls the {id} segment out of the URL into this parameter.
     // ResponseEntity<T> lets us choose the actual HTTP status code returned (200 vs 404),
     // instead of Spring always defaulting to 200.
+    //
+    // findByIdAndOwnerId (not findById) is what actually enforces ownership here - a business
+    // that exists but belongs to a different user returns empty, same 404 as if it didn't
+    // exist at all. Deliberately not a 403: revealing "this ID exists, it's just not yours"
+    // leaks more than a plain "not found" does.
     @GetMapping("/{id}/deadlines")
-    public ResponseEntity<List<Deadline>> getDeadlines(@PathVariable Long id) {
-        Optional<Business> business = businessRepository.findById(id);
+    public ResponseEntity<List<Deadline>> getDeadlines(@PathVariable Long id, @AuthenticationPrincipal User currentUser) {
+        Optional<Business> business = businessRepository.findByIdAndOwnerId(id, currentUser.getId());
 
         if (business.isEmpty()) {
             return ResponseEntity.notFound().build();
