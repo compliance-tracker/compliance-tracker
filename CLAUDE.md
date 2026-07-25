@@ -1,104 +1,43 @@
-# Compliance Tracker — Project Context
+# Compliance Tracker — Backend
 
-## How I want you to work with me (READ THIS FIRST)
-
-I am learning Java/Spring Boot as I build this. **Do not just write full solutions and hand them to me.** Instead:
-
-- Explain the concept or the next small step first, in plain language.
-- Ask me clarifying questions before jumping to code if something is ambiguous.
-- When code is needed, prefer showing me a small snippet and explaining *why*, over generating whole files silently.
-- After any change, tell me exactly what to run and what output to expect, so I can verify it worked myself — don't just say "done."
-- If I ask you to "just do it," still briefly explain what you did afterward — don't skip the explanation.
-- Push back on my ideas if they're technically weak, redundant with something I already have, or contradict something I said earlier in this file or in our conversation. Don't just validate whatever I ask for.
-- Assume I know basic programming concepts (I know Go, Python, TypeScript, C++) but am new to Java specifically and to Spring Boot's conventions/annotations — explain Java/Spring-specific "magic" (annotations, dependency injection, Hibernate auto-config) rather than assuming I already get it.
-
-## What this project is
-
-A **compliance deadline tracker** for Singapore SMEs — tracks obligations like ACRA Annual Return, GST filing, and work pass renewals, computes each business's actual due dates from their own parameters (e.g. Financial Year End), and sends automated reminder notifications ahead of each deadline.
-
-This is a **portfolio/interview project**, not a live business — goal is to demonstrate real backend engineering (a rules engine, job scheduling/dispatch with retries and idempotency, cloud deployment), framed around a genuinely defensible business idea, not a generic CRUD app or tutorial clone.
-
-Important: I am not a lawyer/accountant. The app must frame itself as a reminder/tracking tool, not compliance advice, with a visible disclaimer. Any deadline rule must be sourced from an actual public gov.sg/ACRA/IRAS page — never invent a rule.
+See `../CLAUDE.md` for overall project purpose and how I want to collaborate — this file only
+covers backend/Java-specific details.
 
 ## Tech stack (decided, don't change without discussing)
 
-- **Language:** Java 21 (LTS — deliberately not 25/26, which are newer but less battle-tested with Spring Boot right now)
+- **Language:** Java 21 (LTS — deliberately not 25/26)
 - **Framework:** Spring Boot 4.1.0
 - **Build tool:** Maven
-- **Database:** PostgreSQL 16, running in Docker locally
-- **Planned later:** AWS SQS (job queue for reminder dispatch), AWS ECS/Fargate + RDS (deployment), basic load testing
+- **Database:** PostgreSQL 16 (Docker locally), schema managed by **Flyway** migrations (`src/main/resources/db/migration/`) — not `ddl-auto`
+- **Queue:** AWS SQS — LocalStack locally/CI, real AWS at deployment
+- **Deployed later:** AWS ECS/Fargate + RDS (not done yet — blocked on having an AWS account)
 
 ## Current environment (macOS)
 
-- Java 21 installed via Homebrew (Temurin), `JAVA_HOME` explicitly pinned in `~/.zshrc` to Java 21 (a newer Java 26 is also installed as a Homebrew dependency of something else — ignore it, don't let tools pick it up)
+- Java 21 installed via Homebrew (Temurin), `JAVA_HOME` pinned in `~/.zshrc`
 - Maven and AWS CLI installed via Homebrew
-- Docker Desktop installed, must be manually opened (`open -a Docker`) before `docker` commands work
-- Project lives at `~/Documents/Projects/compliance-tracker` (was previously double-nested due to an unzip mistake — already fixed/flattened)
+- Docker Desktop must be manually opened (`open -a Docker`) before `docker` commands work
+- Project lives at `~/Documents/Projects/compliance-tracker/backend` (moved into this subfolder from the old top-level `compliance-tracker/` when the frontend project was added alongside it)
 - VS Code is the editor (not IntelliJ)
 
-## Postgres container
+## Running locally
 
-Running locally in Docker, **not on the default port** — port 5432 was already taken by an old project's container (`artium-postgres`), so this project uses **5434** instead:
+See `README.md` in this folder for the exact commands (Postgres, LocalStack, DLQ setup, running the app). Don't duplicate those commands here — keep one source of truth to avoid drift.
 
-```bash
-docker run --name compliance-postgres -e POSTGRES_PASSWORD=devpassword -e POSTGRES_DB=compliance_tracker -p 5434:5432 -d postgres:16
-```
+## Known gotchas already hit — watch for these recurring
 
-Other old containers (from unrelated past projects — Artium, DocuQuery) were stopped to free up ports/resources; they're not part of this project and can be ignored.
+- **`pom.xml` dependencies have gone missing/gotten reset more than once** during editing — always double check the full `<dependencies>` block after any edit, rather than assuming a prior edit persisted.
+- **`application.properties` similarly got wiped back to near-empty once** — same caution applies.
+- **New Java files must be placed inside the correct package folder** (`src/main/java/com/chrainx/compliance_tracker/`), matching the `package` declaration — a file placed one level too high fails to compile with confusing "cannot find symbol" errors.
+- **DevTools auto-restart doesn't always reliably pick up `application.properties` changes** — do a full manual stop/restart if a config change doesn't seem to take effect.
+- **When verifying anything, check actual state directly** (`docker exec ... psql ... "\dt"`, `aws sqs receive-message`, etc.) over trusting terminal/log output alone.
+- **Spring Boot 4.1 renamed Jackson's Java packages**: `com.fasterxml.jackson.*` → `tools.jackson.*` (Jackson 3). Also `writeValueAsString` now throws an *unchecked* `JacksonException`, not the old checked `JsonProcessingException`.
+- **Spring Boot 4 split autoconfiguration into per-technology starter modules.** Adding a library's core jar alone (e.g. plain `flyway-core`) no longer triggers its autoconfiguration — need the dedicated starter (`spring-boot-starter-flyway`). If something silently doesn't activate with no error, check whether Spring Boot 4 moved its autoconfiguration to a separate module before assuming the code is wrong.
+- **`@Transactional` doesn't work via self-invocation** (a method calling another `@Transactional` method on `this` within the same class) — Spring's proxy isn't involved, so it's silently a no-op, no error raised.
+- **`@SpringBootTest` boots the entire real app, including real `@Scheduled` jobs.** Once a background poller existed (`ReminderWorkerService`), it started racing integration tests for messages they'd just enqueued. Fixed via `SchedulingConfig` (gated behind `scheduling.enabled`) + a `test` Spring profile disabling scheduling in `@SpringBootTest` classes.
+- **LocalStack versions newer than `3.8.1` require a paid license/auth token even for SQS** on the free community tier — pin to `3.8.1`.
+- **LocalStack's queue state is in-memory and does not survive a container restart** — re-run queue/DLQ creation any time LocalStack was stopped, even if reusing the same container.
 
-## Spring Boot app config
+## Project status
 
-The app runs on **port 8081** (not the default 8080 — that was taken by an old project's container). Current `application.properties`:
-
-```properties
-spring.application.name=compliance-tracker
-
-server.port=8081
-
-spring.datasource.url=jdbc:postgresql://localhost:5434/compliance_tracker
-spring.datasource.username=postgres
-spring.datasource.password=devpassword
-
-spring.jpa.hibernate.ddl-auto=update
-spring.jpa.show-sql=true
-```
-
-`ddl-auto=update` is fine for local dev (lets Hibernate auto-create/update tables from entity classes) — **must not be used in a real production deployment later**, flag this if it comes up during AWS deployment planning.
-
-## Known gotchas already hit once — watch for these recurring
-
-- **`pom.xml` dependencies have gone missing/gotten reset more than once** during editing — always double check the full `<dependencies>` block actually contains what's expected (spring-boot-starter-web, spring-boot-starter-data-jpa, spring-boot-starter-validation, postgresql driver, spring-boot-starter-test, spring-boot-devtools) after any edit, rather than assuming a prior edit persisted.
-- **`application.properties` similarly got wiped back to near-empty once** — same caution applies, verify contents after edits rather than assuming.
-- **New Java files must be placed inside the correct package folder** (`src/main/java/com/chrainx/compliance_tracker/`), matching the `package` declaration at the top of the file — a file placed one level too high will fail to compile with confusing "cannot find symbol" errors.
-- **DevTools auto-restart doesn't always reliably pick up changes to `application.properties`** — if a config change doesn't seem to take effect, do a full manual stop (Ctrl+C) and restart (`./mvnw spring-boot:run`) rather than assuming DevTools caught it.
-- When verifying anything, prefer checking the actual state directly (e.g. `docker exec ... psql ... "\dt"` to check real tables) over trusting terminal output alone — logs can look clean while the real behavior is still broken.
-
-## Project status so far (what's already working, verified)
-
-- Full toolchain confirmed working: Java 21 → Maven → Spring Boot → Tomcat → Postgres, end to end
-- `HelloController` — a working `GET /hello` endpoint, returns a plain string
-- `Business` entity (id, name, financialYearEnd, gstRegistered) — table confirmed created in Postgres via `\dt`
-- `BusinessRepository` — Spring Data JPA repository interface (save/findAll/findById for free)
-- `BusinessController` — `POST /api/businesses` and `GET /api/businesses` endpoints, just written, not yet verified with curl
-
-## Immediate next step (in progress)
-
-Verify the `POST`/`GET /api/businesses` endpoints work via curl:
-
-```bash
-curl -X POST http://localhost:8081/api/businesses -H "Content-Type: application/json" -d '{"name": "Test Cafe Pte Ltd", "financialYearEnd": "2026-12-31", "gstRegistered": true}'
-curl http://localhost:8081/api/businesses
-```
-
-## Roadmap after that (not started yet, don't jump ahead without discussing)
-
-1. Design the **compliance rules** on paper first (3 concrete obligations: ACRA Annual Return, GST F5 filing, one work-pass renewal type) — plain-English rule + source link for each, before writing any rule-engine code
-2. Build the rule engine as pure, unit-tested Java logic (given a `Business`, compute upcoming `Deadline`s) — no API/queue yet
-3. Wrap it in a REST API
-4. Add scheduled reminder dispatch (AWS SQS + worker pattern), with real idempotency handling (don't double-send if a worker crashes and retries) and dead-letter handling (give up gracefully after N failures, don't retry forever)
-5. Deploy to real AWS (ECS/Fargate + RDS), replacing local Docker Postgres
-6. Add basic load testing and get real throughput/latency numbers — this becomes the actual resume-worthy evidence, not just "it works on my laptop"
-
-## My background (for context on how to explain things)
-
-NUS CS + Math graduate, ASEAN Scholar, Codeforces Expert (competitive programming in C++), comfortable in Go/Python/TypeScript/PHP, learning Java/Spring specifically for this project. Applying for SWE roles in Singapore — this project's purpose is to be a genuine, defensible, non-generic portfolio piece for that job search, so prioritize correctness and my actual understanding over speed.
+Issues #1–4, #7–14 are closed (rules engine, REST API, full reminder pipeline with SQS dispatch/worker/idempotency/dead-letter handling, Flyway migrations). Open: **#5** (deploy to real AWS) and **#6** (load testing) — both blocked pending an AWS account. See `README.md` and GitHub issues for full detail; don't duplicate that detail here.
