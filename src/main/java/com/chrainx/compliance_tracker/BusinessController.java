@@ -38,6 +38,12 @@ public class BusinessController {
     // so this parameter just is the logged-in user, no extra lookup needed here.
     @PostMapping
     public Business createBusiness(@RequestBody Business business, @AuthenticationPrincipal User currentUser) {
+        // business is bound straight from the request body, so a caller can supply an "id"
+        // field of their own choosing. JPA's save() does an UPDATE (not an INSERT) whenever
+        // the entity's id is non-null and already exists in the table - so without this,
+        // any authenticated user could overwrite (and take ownership of) another user's
+        // existing business just by guessing/incrementing its id. Force a fresh insert.
+        business.setId(null);
         business.setOwner(currentUser);
         return businessRepository.save(business);
     }

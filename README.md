@@ -308,3 +308,8 @@ dependency.
 
 Actively in development. See [open issues](https://github.com/Chrainx/compliance-tracker/issues)
 for the current roadmap.
+
+**Security note:** a critical IDOR was found and fixed in `POST /api/businesses` — the endpoint
+accepted a client-supplied `id` on create, which JPA's `save()` treated as an update, letting any
+authenticated user overwrite (and take ownership of) another user's business. Fixed by clearing
+the id server-side before saving (issue #66).
