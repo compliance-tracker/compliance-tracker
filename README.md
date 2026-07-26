@@ -73,6 +73,10 @@ PostgreSQL (app_user, business, work_pass,     real AWS prod)   (logs only for n
 - **`BusinessController`** — exposes `POST /api/businesses` (create), `GET /api/businesses`
   (list), and `GET /api/businesses/{id}/deadlines` (compute and return that business's current
   deadlines via `RuleEngine`, including any work-pass renewals) over HTTP.
+- **`WorkPassController`** — exposes `POST`/`GET`/`DELETE` on `/api/businesses/{id}/work-passes`,
+  nested under the owning business — every operation first checks the business belongs to the
+  caller (same `findByIdAndOwnerId` scoping as `BusinessController`) before touching any work
+  pass at all.
 - **`HelloController`** — `GET /hello`, a minimal smoke-test endpoint from initial setup.
 - **`DeadlineRecord`** — persisted counterpart to `rules.Deadline`. Adds the one thing pure
   computation can't carry: state, specifically `reminderSent`. `rules.Deadline` itself stays
@@ -274,6 +278,9 @@ previously stopped, even if reusing the same container.
 | POST   | `/api/businesses`             | Yes            | Create a business, owned by the caller |
 | GET    | `/api/businesses`             | Yes            | List the caller's own businesses (not everyone's) |
 | GET    | `/api/businesses/{id}/deadlines` | Yes         | Compute and return that business's deadlines — 404 if it doesn't exist or isn't yours |
+| POST   | `/api/businesses/{id}/work-passes` | Yes      | Create a work pass under that business — 404 if the business doesn't exist or isn't yours |
+| GET    | `/api/businesses/{id}/work-passes` | Yes      | List work passes for that business — 404 if it doesn't exist or isn't yours |
+| DELETE | `/api/businesses/{id}/work-passes/{workPassId}` | Yes | Remove a work pass — 404 if either the business or the pass doesn't exist/belong to the caller |
 
 Example (register, then use the returned token for everything else):
 
