@@ -50,7 +50,7 @@ public class SecurityConfig {
                         // from the frontend would be rejected before CorsConfig's headers
                         // even get a chance to apply.
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                        .requestMatchers("/hello", "/api/auth/**").permitAll()
+                        .requestMatchers("/hello", "/api/auth/**", "/error").permitAll()
                         .anyRequest().authenticated()
                 )
                 // Runs our JwtAuthenticationFilter before Spring Security's own default
