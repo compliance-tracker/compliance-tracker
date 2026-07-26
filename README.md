@@ -262,6 +262,20 @@ AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://loca
 
 The app will be available at `http://localhost:8081`.
 
+## Security note: secrets
+
+`jwt.secret` and `spring.datasource.password` both default to placeholder values checked into
+`application.properties` (`devpassword` / a generated-but-committed JWT key) — these only ever
+match the local Docker/CI Postgres containers above, but they're still in this public repo's
+git history, so treat them as permanently public, not actually secret. Both are overridable via
+env var (`JWT_SECRET` / `DB_PASSWORD`) without touching the defaults — a real deployment
+**must** set fresh values this way (ideally via a real secret store like AWS Secrets Manager,
+not another committed property), generated the same way as the placeholders:
+
+```bash
+openssl rand -base64 32
+```
+
 ## Notifications
 
 Reminders are just logged by default — nothing to configure, safe for CI/local dev. To actually
