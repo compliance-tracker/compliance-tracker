@@ -284,6 +284,24 @@ send real emails instead:
 Any SMTP provider works, not just Gmail — override `spring.mail.host`/`spring.mail.port` in
 `application.properties` (or as env vars) if using a different one.
 
+### Previewing emails locally without a real account (Mailpit)
+
+To see exactly what a reminder email looks like during local dev, without touching Gmail or any
+real account at all, point the app at [Mailpit](https://mailpit.axllent.org) instead — a fake
+local SMTP server with a web UI showing every email it "received":
+
+```bash
+docker run --name compliance-mailpit -p 1025:1025 -p 8025:8025 -d axllent/mailpit
+
+MAIL_HOST=localhost MAIL_PORT=1025 MAIL_SMTP_AUTH=false MAIL_SMTP_STARTTLS=false \
+  MAIL_FROM=reminders@compliance-tracker.test NOTIFICATIONS_CHANNEL=email \
+  ./mvnw spring-boot:run
+```
+
+Open `http://localhost:8025` to see every email the app sends land there instantly — nothing
+leaves your machine, no credentials of any kind needed. Verified working end to end while
+building #17: a real email arrived with the correct sender, recipient, subject, and body.
+
 If either container was already created in a previous session, `docker start compliance-postgres`
 / `docker start compliance-localstack` instead of `docker run` — otherwise `docker run` will
 fail with a "name already in use" error.
