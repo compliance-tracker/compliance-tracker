@@ -2,13 +2,15 @@ package com.chrainx.compliance_tracker;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
-// Stand-in NotificationSender: logs instead of really sending an email/SMS. No email provider
-// is wired up yet (not in scope) - this exists so the rest of the dispatch/worker pipeline is
-// genuinely end-to-end testable now, with the real channel swappable in later behind the same
-// NotificationSender interface.
+// Default NotificationSender: logs instead of really sending an email. Active whenever
+// notifications.channel isn't explicitly set to "email" (matchIfMissing=true) - this is what
+// keeps CI and local dev working with zero mail credentials configured at all, and is what
+// EmailNotificationSender (issue #17) sits alongside rather than replaces outright.
 @Component
+@ConditionalOnProperty(prefix = "notifications", name = "channel", havingValue = "logging", matchIfMissing = true)
 public class LoggingNotificationSender implements NotificationSender {
 
     private static final Logger log = LoggerFactory.getLogger(LoggingNotificationSender.class);
