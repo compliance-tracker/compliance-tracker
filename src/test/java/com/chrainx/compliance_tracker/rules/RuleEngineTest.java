@@ -33,6 +33,57 @@ class RuleEngineTest {
     }
 
     @Test
+    void acraDeadline_rollsForwardToNextYear_oncePassed() {
+        // Regression test for issue #27: financialYearEnd + 7 months is a single fixed date -
+        // once that date has passed, the deadline must roll forward to next year's occurrence
+        // instead of staying stuck on the same date forever.
+        Business business = new Business();
+        business.setFinancialYearEnd(LocalDate.of(2024, 12, 31)); // deadline: 2025-07-31
+        business.setGstRegistered(false);
+
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, Collections.emptyList(), LocalDate.of(2026, 1, 1));
+
+        Deadline acra = deadlines.stream()
+                .filter(d -> d.getObligationType() == ObligationType.ACRA_ANNUAL_RETURN)
+                .findFirst()
+                .orElseThrow();
+
+        // 2025-07-31 already passed by 2026-01-01, so the next occurrence is 2026-07-31, not
+        // the original 2025-07-31 and not a jump straight to 2027.
+        assertEquals(LocalDate.of(2026, 7, 31), acra.getDueDate());
+    }
+
+    @Test
+    void acraDeadline_rollsForwardMultipleYears_ifFinancialYearEndIsOld() {
+        Business business = new Business();
+        business.setFinancialYearEnd(LocalDate.of(2020, 12, 31)); // deadline: 2021-07-31
+
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, Collections.emptyList(), LocalDate.of(2026, 1, 1));
+
+        Deadline acra = deadlines.stream()
+                .filter(d -> d.getObligationType() == ObligationType.ACRA_ANNUAL_RETURN)
+                .findFirst()
+                .orElseThrow();
+
+        assertEquals(LocalDate.of(2026, 7, 31), acra.getDueDate());
+    }
+
+    @Test
+    void acraDeadline_dueToday_isNotRolledForward() {
+        Business business = new Business();
+        business.setFinancialYearEnd(LocalDate.of(2025, 12, 31)); // deadline: 2026-07-31
+
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, Collections.emptyList(), LocalDate.of(2026, 7, 31));
+
+        Deadline acra = deadlines.stream()
+                .filter(d -> d.getObligationType() == ObligationType.ACRA_ANNUAL_RETURN)
+                .findFirst()
+                .orElseThrow();
+
+        assertEquals(LocalDate.of(2026, 7, 31), acra.getDueDate());
+    }
+
+    @Test
     void gstRegisteredBusiness_getsGstDeadline_oneMonthAfterCalendarQuarterEnd() {
         Business business = new Business();
         business.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
