@@ -118,6 +118,48 @@ class AuthIntegrationTest {
     }
 
     @Test
+    void malformedIdWithValidToken_returns400NotUnauthorized() {
+        // Regression test for issue #67: a valid token hitting a malformed path parameter
+        // (a non-numeric id where a Long is expected) should fail validation with 400, not
+        // be misreported as an auth failure. Before the fix, Spring MVC's internal forward to
+        // /error (triggered by the MethodArgumentTypeMismatchException) was itself blocked by
+        // SecurityConfig's anyRequest().authenticated() rule, so it never reached the real
+        // 400 response - it fell through to the 401 AuthenticationEntryPoint instead.
+        String email = "auth-e2e-malformed-id-" + System.nanoTime() + "@example.com";
+        String token = restTemplate.postForEntity(
+                "/api/auth/register", new AuthRequest(email, "a-real-password"), AuthResponse.class)
+                .getBody().token();
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/businesses/not-a-number/deadlines", org.springframework.http.HttpMethod.GET,
+                new HttpEntity<>(headers), String.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    }
+
+    @Test
+    void unmappedPathWithValidToken_returns404NotUnauthorized() {
+        // Same root cause as above (issue #67), different trigger: a truly unmapped path
+        // (NoHandlerFoundException) should 404, not be misreported as 401.
+        String email = "auth-e2e-unmapped-path-" + System.nanoTime() + "@example.com";
+        String token = restTemplate.postForEntity(
+                "/api/auth/register", new AuthRequest(email, "a-real-password"), AuthResponse.class)
+                .getBody().token();
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/completely-made-up", org.springframework.http.HttpMethod.GET,
+                new HttpEntity<>(headers), String.class);
+
+        assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
+    }
+
+    @Test
     void login_withWrongPassword_isRejected() {
         String email = "auth-e2e-wrongpass-" + System.nanoTime() + "@example.com";
         restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "correct-password"), AuthResponse.class);
