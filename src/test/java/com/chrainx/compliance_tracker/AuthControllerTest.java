@@ -1,6 +1,7 @@
 package com.chrainx.compliance_tracker;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -10,6 +11,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -50,6 +52,22 @@ class AuthControllerTest {
         when(userRepository.findByEmail("taken@example.com")).thenReturn(Optional.of(new User()));
 
         ResponseEntity<AuthResponse> response = controller.register(new AuthRequest("taken@example.com", "password123"));
+
+        assertEquals(409, response.getStatusCode().value());
+    }
+
+    @Test
+    void register_returns409_whenSaveHitsTheUniqueConstraint() {
+        // Regression test for issue #42: simulates the race window where findByEmail returns
+        // empty (no concurrent request has committed yet) but save() still fails, because
+        // another request for the same email won the race and committed first. Without
+        // catching this, it would surface as an unhandled 500, not the same clean 409 the
+        // sequential-request case above returns.
+        when(userRepository.findByEmail("racing@example.com")).thenReturn(Optional.empty());
+        doThrow(new DataIntegrityViolationException("duplicate key value violates unique constraint"))
+                .when(userRepository).save(any());
+
+        ResponseEntity<AuthResponse> response = controller.register(new AuthRequest("racing@example.com", "password123"));
 
         assertEquals(409, response.getStatusCode().value());
     }

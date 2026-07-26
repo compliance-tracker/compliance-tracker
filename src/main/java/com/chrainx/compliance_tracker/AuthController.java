@@ -2,6 +2,7 @@ package com.chrainx.compliance_tracker;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
@@ -35,7 +36,18 @@ public class AuthController {
         // Only the hash is ever stored - passwordEncoder.matches() at login time compares a
         // freshly-hashed attempt against this, the raw password itself is never persisted.
         user.setPasswordHash(passwordEncoder.encode(request.password()));
-        userRepository.save(user);
+
+        try {
+            userRepository.save(user);
+        } catch (DataIntegrityViolationException e) {
+            // The findByEmail check above isn't atomic with this save - two concurrent
+            // registration requests for the same email can both pass that check before either
+            // commits, and the DB's unique constraint on email (the actual enforcement point)
+            // rejects the second insert. Without this catch, that surfaces as an unhandled
+            // exception (a 500) instead of the same clean 409 the sequential-request case
+            // already returns above.
+            return ResponseEntity.status(409).build();
+        }
 
         return ResponseEntity.ok(new AuthResponse(jwtService.generateToken(user.getEmail())));
     }

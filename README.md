@@ -155,7 +155,10 @@ PostgreSQL (app_user, business, work_pass,     real AWS prod)   (logs only for n
   returns the same `401` whether the email doesn't exist or the password is wrong — revealing
   which one it was would let an attacker enumerate registered emails. Login is also rate
   limited via `LoginRateLimiter` — 5 failed attempts per IP per minute, then `429 Too Many
-  Requests` (including for the correct password, until the window resets).
+  Requests` (including for the correct password, until the window resets). Registration checks
+  for an existing email up front, but also catches the DB's own unique-constraint violation
+  around the actual save — two concurrent registrations for the same email resolve to exactly
+  one `200` and one clean `409`, never an unhandled `500` (issue #42).
 - **`BusinessController`** — every method now scopes to `@AuthenticationPrincipal User`:
   `createBusiness` sets the owner automatically; `getAllBusinesses`/`getDeadlines` only
   ever return the current user's own businesses (`findByOwnerId`/`findByIdAndOwnerId`). A
