@@ -64,6 +64,60 @@ class AuthIntegrationTest {
     }
 
     @Test
+    void createBusiness_withAnotherUsersExistingId_doesNotOverwriteTheirBusiness() {
+        // Full-stack regression test for issue #66: user A creates a business, then user B
+        // (a completely separate account) tries to "create" a business while supplying A's
+        // real business id in the request body. Before the fix, JPA's save() treated the
+        // non-null id as an UPDATE, silently handing B ownership of A's business. After the
+        // fix, the id is stripped server-side, so B gets a brand-new business and A's is
+        // untouched.
+        String emailA = "auth-e2e-idor-a-" + System.nanoTime() + "@example.com";
+        String emailB = "auth-e2e-idor-b-" + System.nanoTime() + "@example.com";
+
+        String tokenA = restTemplate.postForEntity(
+                "/api/auth/register", new AuthRequest(emailA, "a-real-password"), AuthResponse.class)
+                .getBody().token();
+        String tokenB = restTemplate.postForEntity(
+                "/api/auth/register", new AuthRequest(emailB, "a-real-password"), AuthResponse.class)
+                .getBody().token();
+
+        HttpHeaders headersA = new HttpHeaders();
+        headersA.setBearerAuth(tokenA);
+
+        Business businessA = new Business();
+        businessA.setName("User A's Real Business");
+        businessA.setFinancialYearEnd(java.time.LocalDate.of(2026, 12, 31));
+        businessA.setGstRegistered(false);
+
+        ResponseEntity<Business> createAResponse = restTemplate.postForEntity(
+                "/api/businesses", new HttpEntity<>(businessA, headersA), Business.class);
+        Long businessAId = createAResponse.getBody().getId();
+
+        HttpHeaders headersB = new HttpHeaders();
+        headersB.setBearerAuth(tokenB);
+
+        Business attackerPayload = new Business();
+        attackerPayload.setId(businessAId); // the actual exploit: reusing A's real id
+        attackerPayload.setName("Hijacked by User B");
+        attackerPayload.setFinancialYearEnd(java.time.LocalDate.of(2026, 12, 31));
+        attackerPayload.setGstRegistered(false);
+
+        ResponseEntity<Business> attackResponse = restTemplate.postForEntity(
+                "/api/businesses", new HttpEntity<>(attackerPayload, headersB), Business.class);
+
+        assertEquals(HttpStatus.OK, attackResponse.getStatusCode());
+        assertTrue(attackResponse.getBody().getId() != businessAId,
+                "attacker's business must get a fresh id, not overwrite A's");
+
+        ResponseEntity<Business[]> listAResponse = restTemplate.exchange(
+                "/api/businesses", org.springframework.http.HttpMethod.GET, new HttpEntity<>(headersA), Business[].class);
+
+        assertTrue(java.util.Arrays.stream(listAResponse.getBody())
+                .anyMatch(b -> b.getId().equals(businessAId) && b.getName().equals("User A's Real Business")),
+                "User A's original business must still exist, unmodified, still owned by A");
+    }
+
+    @Test
     void login_withWrongPassword_isRejected() {
         String email = "auth-e2e-wrongpass-" + System.nanoTime() + "@example.com";
         restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "correct-password"), AuthResponse.class);

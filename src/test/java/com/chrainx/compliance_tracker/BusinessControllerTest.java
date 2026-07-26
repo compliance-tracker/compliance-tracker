@@ -110,6 +110,23 @@ class BusinessControllerTest {
     }
 
     @Test
+    void createBusiness_clearsClientSuppliedId_toPreventOverwritingAnotherUsersBusiness() {
+        // Regression test for the IDOR in issue #66: a request body can carry any "id" the
+        // caller wants (e.g. someone else's existing business id). If that id reached save()
+        // unchanged, JPA would UPDATE that row instead of inserting a new one - full takeover
+        // of another user's business. createBusiness must strip it before saving.
+        Business business = new Business();
+        business.setId(999L); // pretend this belongs to another user's existing business
+        business.setName("Hijacked Co");
+
+        when(businessRepository.save(business)).thenReturn(business);
+
+        controller.createBusiness(business, currentUser);
+
+        assertEquals(null, business.getId());
+    }
+
+    @Test
     void getAllBusinesses_returnsOnlyCurrentUsersBusinesses() {
         Business business = new Business();
         business.setId(1L);
