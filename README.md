@@ -3,8 +3,8 @@
 A compliance deadline tracker for Singapore SMEs. Tracks obligations like ACRA Annual Return,
 GST filing, and work pass renewals, computes each business's actual due dates from its own
 parameters (e.g. Financial Year End), and dispatches automated reminders ahead of each deadline
-via a scheduled sync → SQS queue → worker pipeline. The actual notification channel (email/SMS)
-isn't wired up yet — reminders currently land as log output via a stand-in `NotificationSender`.
+via a scheduled sync → SQS queue → worker pipeline. Reminders can be sent as real email (SMTP)
+or, by default, just logged — see "Notifications" below.
 
 > **Disclaimer:** This is a reminder/tracking tool, not compliance advice. It is not a
 > substitute for consulting a qualified accountant or company secretary. Deadline rules are
@@ -105,12 +105,15 @@ PostgreSQL (app_user, business, work_pass,     real AWS prod)   (logs only for n
   Verified with a real integration test (`SqsDispatchIntegrationTest`) that boots the full app
   and confirms a message actually lands in a real SQS queue (LocalStack locally).
 - **`NotificationSender`** — interface for "how a reminder actually reaches a business."
-  Kept separate from the worker so a real channel (email via AWS SES, SMS, etc.) can be swapped
-  in later without touching the queue-consuming/idempotency logic.
-- **`LoggingNotificationSender`** — the only implementation so far: logs the reminder instead
-  of really sending one. No email provider is wired up yet — flagged here as a real scope gap,
-  not a silently-cut corner. The rest of the pipeline is genuinely end-to-end functional with
-  this as a stand-in.
+  Kept separate from the worker so the real channel can be swapped in without touching the
+  queue-consuming/idempotency logic. Two implementations, chosen via `notifications.channel`:
+  - **`LoggingNotificationSender`** (default) — just logs. Needs no credentials at all, active
+    whenever `notifications.channel` isn't explicitly `email` — this is what keeps CI and local
+    dev working with zero mail setup.
+  - **`EmailNotificationSender`** (`notifications.channel=email`) — sends a real email via SMTP
+    (Spring's `JavaMailSender`) to the business owner's registered email address. Configured for
+    Gmail SMTP by default (`spring.mail.*` in `application.properties`) using an app password,
+    not a real account password. See "Notifications" below for setup.
 - **`ReminderWorkerService`** — `@Service`, polls SQS every 30s (`pollAndProcess`,
   `@Scheduled(fixedDelay = 30_000)`). For each message: looks up the `DeadlineRecord`, and if
   it's not already `reminderSent` (the actual idempotency check — handles a message being
@@ -218,8 +221,6 @@ needs the dedicated `spring-boot-starter-flyway` module (see `pom.xml`).
 
 ### Planned (not built yet — see [open issues](https://github.com/Chrainx/compliance-tracker/issues))
 
-- **Real notification channel** — replace `LoggingNotificationSender` with an actual email
-  (e.g. AWS SES) or SMS provider behind the existing `NotificationSender` interface.
 - **DLQ monitoring/alerting** — currently, a message that lands in the dead-letter queue is
   silent; nothing surfaces it. Would need at minimum a way to inspect DLQ depth.
 - **Input validation** — `spring-boot-starter-validation` has been a dependency since day one
@@ -260,6 +261,46 @@ AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://loca
 ```
 
 The app will be available at `http://localhost:8081`.
+
+## Notifications
+
+Reminders are just logged by default — nothing to configure, safe for CI/local dev. To actually
+send real emails instead:
+
+1. Generate a Gmail **app password** at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
+   (requires 2-Step Verification enabled first). Don't use your real account password — Gmail
+   rejects plain-password SMTP login outright once 2FA is on, and an app password can be
+   revoked independently later without touching the real login.
+2. Set these before starting the app:
+   ```bash
+   export MAIL_USERNAME=youraddress@gmail.com
+   export MAIL_APP_PASSWORD=the-16-character-app-password
+   export NOTIFICATIONS_CHANNEL=email
+   ./mvnw spring-boot:run
+   ```
+3. Reminders now send to whatever email each business's owner registered with, from
+   `MAIL_USERNAME`.
+
+Any SMTP provider works, not just Gmail — override `spring.mail.host`/`spring.mail.port` in
+`application.properties` (or as env vars) if using a different one.
+
+### Previewing emails locally without a real account (Mailpit)
+
+To see exactly what a reminder email looks like during local dev, without touching Gmail or any
+real account at all, point the app at [Mailpit](https://mailpit.axllent.org) instead — a fake
+local SMTP server with a web UI showing every email it "received":
+
+```bash
+docker run --name compliance-mailpit -p 1025:1025 -p 8025:8025 -d axllent/mailpit
+
+MAIL_HOST=localhost MAIL_PORT=1025 MAIL_SMTP_AUTH=false MAIL_SMTP_STARTTLS=false \
+  MAIL_FROM=reminders@compliance-tracker.test NOTIFICATIONS_CHANNEL=email \
+  ./mvnw spring-boot:run
+```
+
+Open `http://localhost:8025` to see every email the app sends land there instantly — nothing
+leaves your machine, no credentials of any kind needed. Verified working end to end while
+building #17: a real email arrived with the correct sender, recipient, subject, and body.
 
 If either container was already created in a previous session, `docker start compliance-postgres`
 / `docker start compliance-localstack` instead of `docker run` — otherwise `docker run` will
