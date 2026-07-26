@@ -150,7 +150,9 @@ PostgreSQL (app_user, business, work_pass,     real AWS prod)   (logs only for n
 - **`AuthController`** — `POST /api/auth/register` and `POST /api/auth/login`, both returning
   a JWT. Passwords are hashed with BCrypt, never stored or compared in plain text. Login
   returns the same `401` whether the email doesn't exist or the password is wrong — revealing
-  which one it was would let an attacker enumerate registered emails.
+  which one it was would let an attacker enumerate registered emails. Login is also rate
+  limited via `LoginRateLimiter` — 5 failed attempts per IP per minute, then `429 Too Many
+  Requests` (including for the correct password, until the window resets).
 - **`BusinessController`** — every method now scopes to `@AuthenticationPrincipal User`:
   `createBusiness` sets the owner automatically; `getAllBusinesses`/`getDeadlines` only
   ever return the current user's own businesses (`findByOwnerId`/`findByIdAndOwnerId`). A
@@ -274,7 +276,7 @@ previously stopped, even if reusing the same container.
 |--------|-------------------------------|----------------|---------------------------------|
 | GET    | `/hello`                      | No             | Smoke-test endpoint             |
 | POST   | `/api/auth/register`          | No             | Create an account, returns a JWT |
-| POST   | `/api/auth/login`              | No             | Returns a JWT for an existing account |
+| POST   | `/api/auth/login`              | No             | Returns a JWT for an existing account — `429` after 5 failed attempts from the same IP within a minute |
 | POST   | `/api/businesses`             | Yes            | Create a business, owned by the caller |
 | GET    | `/api/businesses`             | Yes            | List the caller's own businesses (not everyone's) |
 | GET    | `/api/businesses/{id}/deadlines` | Yes         | Compute and return that business's deadlines — 404 if it doesn't exist or isn't yours |

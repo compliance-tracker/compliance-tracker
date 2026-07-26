@@ -1,6 +1,9 @@
 package com.chrainx.compliance_tracker;
 
+import org.junit.jupiter.api.MethodOrderer;
+import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
@@ -9,6 +12,7 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -19,9 +23,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 // methods directly in Java), this is the only test that actually exercises SecurityConfig's
 // filter chain. A bug in the security rules themselves (e.g. a wrong path pattern, a missing
 // permitAll) wouldn't show up in the method-level tests at all - only here.
+//
+// @TestMethodOrder: every TestRestTemplate call in this class shares one real HTTP client
+// hitting the same loopback address, and LoginRateLimiter is a singleton bean keyed by that
+// same IP across the whole (cached) Spring context - so the rate-limit test below is @Order(1)
+// to guarantee it runs before any other test's failed login attempt (e.g.
+// login_withWrongPassword_isRejected) can pollute its count.
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureTestRestTemplate
 @ActiveProfiles("test")
+@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class AuthIntegrationTest {
 
     @Autowired
@@ -157,6 +168,25 @@ class AuthIntegrationTest {
                 new HttpEntity<>(headers), String.class);
 
         assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
+    }
+
+    @Test
+    @Order(1) // must run before any other test's failed login attempt - see class-level comment
+    @DirtiesContext(methodMode = DirtiesContext.MethodMode.AFTER_METHOD)
+    void repeatedFailedLogins_fromSameIp_getRateLimitedWith429() {
+        String email = "auth-e2e-ratelimit-" + System.nanoTime() + "@example.com";
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "correct-password"), AuthResponse.class);
+
+        for (int i = 0; i < 5; i++) {
+            ResponseEntity<AuthResponse> response = restTemplate.postForEntity(
+                    "/api/auth/login", new AuthRequest(email, "wrong-password"), AuthResponse.class);
+            assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
+        }
+
+        ResponseEntity<AuthResponse> sixthAttempt = restTemplate.postForEntity(
+                "/api/auth/login", new AuthRequest(email, "wrong-password"), AuthResponse.class);
+
+        assertEquals(HttpStatus.TOO_MANY_REQUESTS, sixthAttempt.getStatusCode());
     }
 
     @Test
