@@ -30,6 +30,24 @@ Auth model and security-specific detail (JWT internals, rate limiting, IDOR hist
 handling) live in [security.md](security.md), not here. Notification channel setup lives in
 [notifications.md](notifications.md).
 
+## Package structure
+
+Package-by-feature, not one flat package - `com.chrainx.compliance_tracker` grew past 30 files in
+a single directory before this split (issue #90):
+
+| Package | Contents |
+|---|---|
+| `auth` | `AuthController`/`AuthRequest`/`AuthResponse`, `JwtService`, `JwtAuthenticationFilter`, `LoginRateLimiter`, `TokenBlocklist`, `User`, `UserRepository` |
+| `business` | `Business`/`BusinessController`/`BusinessRepository`, `WorkPass`/`WorkPassController`/`WorkPassRepository`, `DeadlineRecord`/`DeadlineRecordRepository`, `DeadlineSyncService` |
+| `config` | `SecurityConfig`, `CorsConfig`, `SchedulingConfig`, `SqsConfig` — cross-cutting `@Configuration` classes, not owned by any one feature |
+| `notifications` | `NotificationSender` interface, `EmailNotificationSender`, `LoggingNotificationSender` |
+| `queue` | `SqsDispatchService`, `ReminderWorkerService`, `ReminderMessage` |
+| `rules` | Pure rules-engine logic (`RuleEngine`, `Deadline`, `ObligationType`) — predates this split, was already its own package |
+| *(root)* | `ComplianceTrackerApplication` (entry point), `HelloController` (smoke test) |
+
+Test packages mirror this exactly (`src/test/.../auth`, `.../business`, etc.) - standard Maven/
+Gradle convention, and it kept import parity easy to check while doing the split.
+
 ## Domain layer
 
 - **`Business`** — entity representing an SME and the parameters its compliance deadlines are
