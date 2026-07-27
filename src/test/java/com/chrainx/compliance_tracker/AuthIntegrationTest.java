@@ -286,4 +286,67 @@ class AuthIntegrationTest {
 
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
     }
+
+    @Test
+    void refresh_issuesAWorkingNewAccessToken_andRotatesTheRefreshToken() {
+        // Regression test for issue #26, real full-stack proof: the new access token this test
+        // gets back from /api/auth/refresh must actually work against a real protected
+        // endpoint, and the old refresh token it was exchanged for must be genuinely dead
+        // afterward - not just that the endpoint returned 200.
+        String email = "auth-e2e-refresh-" + System.nanoTime() + "@example.com";
+        AuthResponse original = restTemplate.postForEntity(
+                "/api/auth/register", new AuthRequest(email, "a-real-password"), AuthResponse.class).getBody();
+
+        HttpHeaders refreshHeaders = new HttpHeaders();
+        refreshHeaders.setBearerAuth(original.refreshToken());
+
+        ResponseEntity<AuthResponse> refreshResponse = restTemplate.postForEntity(
+                "/api/auth/refresh", new HttpEntity<>(refreshHeaders), AuthResponse.class);
+        assertEquals(HttpStatus.OK, refreshResponse.getStatusCode());
+        AuthResponse refreshed = refreshResponse.getBody();
+
+        HttpHeaders newAccessHeaders = new HttpHeaders();
+        newAccessHeaders.setBearerAuth(refreshed.token());
+        ResponseEntity<String> businessesResponse = restTemplate.exchange(
+                "/api/businesses", org.springframework.http.HttpMethod.GET,
+                new HttpEntity<>(newAccessHeaders), String.class);
+        assertEquals(HttpStatus.OK, businessesResponse.getStatusCode());
+
+        // Reusing the original (now-rotated) refresh token must fail.
+        ResponseEntity<AuthResponse> reuseAttempt = restTemplate.postForEntity(
+                "/api/auth/refresh", new HttpEntity<>(refreshHeaders), AuthResponse.class);
+        assertEquals(HttpStatus.UNAUTHORIZED, reuseAttempt.getStatusCode());
+    }
+
+    @Test
+    void refreshToken_cannotBeUsedAsAnAccessToken() {
+        String email = "auth-e2e-refresh-as-access-" + System.nanoTime() + "@example.com";
+        String refreshToken = restTemplate.postForEntity(
+                "/api/auth/register", new AuthRequest(email, "a-real-password"), AuthResponse.class)
+                .getBody().refreshToken();
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(refreshToken);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/businesses", org.springframework.http.HttpMethod.GET, new HttpEntity<>(headers), String.class);
+
+        assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
+    }
+
+    @Test
+    void accessToken_cannotBeUsedToRefresh() {
+        String email = "auth-e2e-access-as-refresh-" + System.nanoTime() + "@example.com";
+        String accessToken = restTemplate.postForEntity(
+                "/api/auth/register", new AuthRequest(email, "a-real-password"), AuthResponse.class)
+                .getBody().token();
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(accessToken);
+
+        ResponseEntity<AuthResponse> response = restTemplate.postForEntity(
+                "/api/auth/refresh", new HttpEntity<>(headers), AuthResponse.class);
+
+        assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
+    }
 }

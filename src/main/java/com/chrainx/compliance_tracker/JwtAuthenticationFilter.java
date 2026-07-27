@@ -13,14 +13,15 @@ import java.io.IOException;
 import java.util.Collections;
 
 // Runs once per request, before the actual controller. Looks for "Authorization: Bearer <token>",
-// and if it's present, not revoked, and valid, tells Spring Security "this request is
-// authenticated as this user" by populating the SecurityContext - which is what
+// and if it's present, not revoked, not a refresh token, and valid, tells Spring Security "this
+// request is authenticated as this user" by populating the SecurityContext - which is what
 // @AuthenticationPrincipal in controllers reads from. If the header is missing, the token's
-// revoked, or the token's invalid, this filter simply does nothing and lets the request
-// continue unauthenticated - SecurityConfig's authorizeHttpRequests rules are what actually
-// reject it with a 401 further down the chain. Deliberately not special-cased: a revoked token
-// is treated exactly the same passive way an expired/malformed one already was, rather than
-// this filter setting its own response status and short-circuiting the chain itself (which
+// revoked, the token's actually a refresh token (issue #26 - those are only ever valid against
+// POST /api/auth/refresh, never as a substitute access token), or the token's invalid, this
+// filter simply does nothing and lets the request continue unauthenticated - SecurityConfig's
+// authorizeHttpRequests rules are what actually reject it with a 401 further down the chain.
+// Deliberately not special-cased: all of these are treated exactly the same passive way, rather
+// than this filter setting its own response status and short-circuiting the chain itself (which
 // would risk skipping other filters further down, e.g. CORS handling).
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
@@ -44,7 +45,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             String token = authHeader.substring("Bearer ".length());
 
-            if (!tokenBlocklist.isRevoked(token)) {
+            if (!tokenBlocklist.isRevoked(token) && !jwtService.isRefreshToken(token)) {
                 String email = jwtService.extractEmail(token);
 
                 if (email != null) {

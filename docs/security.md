@@ -41,6 +41,42 @@ actual app, makes real requests via `TestRestTemplate`) — the latter is what a
 `SecurityConfig`'s rules work, since calling a controller method directly bypasses the security
 filter chain entirely.
 
+## Token refresh (issue #26)
+
+Before this, the only way to get a new token after the access token's 24h expiry was logging in
+again with a password — reasonable for a demo, annoying for a real user. Now `register`/`login`
+return **two** tokens: `token` (short-lived, 24h, attached to every normal API request — same
+name/lifetime as before, kept for backward compatibility with the existing frontend, which
+already reads `response.token`) and `refreshToken` (long-lived, 7 days, usable for exactly one
+thing: `POST /api/auth/refresh`).
+
+They're distinguished by a `type` claim inside the JWT payload itself — a refresh token carries
+`type=refresh`, an access token doesn't — checked in two places: `JwtAuthenticationFilter` rejects
+a refresh token presented as if it were an access token (so a stolen refresh token can't be used
+to actually call the API), and `AuthController.refresh` rejects an access token presented as if it
+were a refresh token (so a short-lived token can't be used to mint itself an indefinite chain of
+replacements).
+
+`POST /api/auth/refresh` implements **rotation**: exchanging a refresh token immediately revokes
+it (via the same `TokenBlocklist` logout already uses) and returns a brand new access/refresh
+pair. This makes each refresh token single-use — reusing one that's already been exchanged
+(whether by the legitimate client retrying, or an attacker who intercepted it after it was already
+used) gets a `401`, not a second valid pair.
+
+**A real bug found live, not hypothetically**: standard JWT `iat`/`exp` claims only have *second*
+precision. Two tokens generated for the same email within the same wall-clock second (e.g. two
+refresh calls fired back-to-back) were byte-identical signed strings — which silently broke
+rotation, since revoking "the old token" by exact string match also revoked the "new" one just
+issued to replace it, because they were the same string. Fixed by adding a random `jti` (JWT ID,
+via `UUID.randomUUID()`) to every generated token, access or refresh, guaranteeing two tokens are
+never identical even if issued in the same second. Regression-tested in `JwtServiceTest`, and
+reproduced/re-verified live via curl both before and after the fix.
+
+**Access token lifetime (24h) was deliberately left unchanged**, not shortened now that refresh
+exists — shortening it before the frontend actually implements silent/automatic refresh would
+just make the current UI log users out more often, a regression with no offsetting benefit yet.
+Tightening it is a natural follow-up once the frontend half of this is built.
+
 ## Login rate limiting (issue #35)
 
 `LoginRateLimiter` — an in-memory, per-IP fixed-window counter (5 failed attempts per minute,
