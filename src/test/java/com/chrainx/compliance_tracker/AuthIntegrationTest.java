@@ -15,6 +15,14 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -198,5 +206,50 @@ class AuthIntegrationTest {
                 "/api/auth/login", new AuthRequest(email, "wrong-password"), AuthResponse.class);
 
         assertEquals(HttpStatus.UNAUTHORIZED, loginResponse.getStatusCode());
+    }
+
+    @Test
+    void concurrentRegistrations_forTheSameEmail_resolveToExactlyOneSuccess() throws Exception {
+        // Regression test for issue #42: two real threads firing the same registration request
+        // at genuinely the same instant, against real Postgres - not simulated via mocks. A
+        // CountDownLatch holds both threads at the starting line so they hit
+        // userRepository.findByEmail() as close to simultaneously as the JVM allows, maximizing
+        // the chance of actually reproducing the race window (both see "no such email yet"
+        // before either commits) rather than one just happening to finish first every time.
+        String email = "auth-e2e-race-" + System.nanoTime() + "@example.com";
+        AuthRequest request = new AuthRequest(email, "a-real-password");
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch startLine = new CountDownLatch(1);
+
+        List<Future<ResponseEntity<AuthResponse>>> futures = List.of(
+                executor.submit(() -> {
+                    startLine.await();
+                    return restTemplate.postForEntity("/api/auth/register", request, AuthResponse.class);
+                }),
+                executor.submit(() -> {
+                    startLine.await();
+                    return restTemplate.postForEntity("/api/auth/register", request, AuthResponse.class);
+                })
+        );
+
+        startLine.countDown();
+        List<Integer> statusCodes = futures.stream()
+                .map(f -> {
+                    try {
+                        return f.get(10, TimeUnit.SECONDS).getStatusCode().value();
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                })
+                .collect(Collectors.toList());
+        executor.shutdown();
+
+        // Exactly one request should have won (200) and the other should see the clean 409 -
+        // never two 200s (would mean two accounts for one email, or a corrupted response), and
+        // critically never a 500 (would mean the race actually reached the unhandled-exception
+        // path this fix closes).
+        assertEquals(1, statusCodes.stream().filter(s -> s == 200).count());
+        assertEquals(1, statusCodes.stream().filter(s -> s == 409).count());
     }
 }
