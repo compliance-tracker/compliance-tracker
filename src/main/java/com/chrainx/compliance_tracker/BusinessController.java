@@ -70,7 +70,7 @@ public class BusinessController {
         }
 
         List<WorkPass> workPasses = workPassRepository.findByBusinessId(id);
-        List<Deadline> deadlines = ruleEngine.computeDeadlines(business.get(), workPasses, LocalDate.now());
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(business.get(), workPasses, LocalDate.now(RuleEngine.SINGAPORE_TIME_ZONE));
         return ResponseEntity.ok(deadlines);
     }
 

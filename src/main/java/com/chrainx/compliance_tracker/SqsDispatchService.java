@@ -1,5 +1,6 @@
 package com.chrainx.compliance_tracker;
 
+import com.chrainx.compliance_tracker.rules.RuleEngine;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -44,7 +45,7 @@ public class SqsDispatchService {
     // persisting any newly-computed deadlines first. Not a hard guarantee of ordering - a
     // proper fix would explicitly chain sync -> dispatch in one job - but acceptable for this
     // project's scope; flagged as a known limitation.
-    @Scheduled(cron = "0 15 1 * * *")
+    @Scheduled(cron = "0 15 1 * * *", zone = "Asia/Singapore")
     public void scheduledDispatch() {
         dispatchDueSoonDeadlines(14);
     }
@@ -54,7 +55,7 @@ public class SqsDispatchService {
                 GetQueueUrlRequest.builder().queueName(queueName).build()
         ).queueUrl();
 
-        List<DeadlineRecord> dueSoon = deadlineSyncService.findDueSoonAndUnreminded(LocalDate.now(), daysAhead);
+        List<DeadlineRecord> dueSoon = deadlineSyncService.findDueSoonAndUnreminded(LocalDate.now(RuleEngine.SINGAPORE_TIME_ZONE), daysAhead);
 
         for (DeadlineRecord record : dueSoon) {
             // Jackson 3.x (bundled by Spring Boot 4.1) made writeValueAsString throw an

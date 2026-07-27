@@ -73,7 +73,8 @@ handling) live in [security.md](security.md), not here. Notification channel set
   `existsByBusinessIdAndObligationTypeAndDueDate` (dedupe check) and
   `findByReminderSentFalseAndDueDateLessThanEqual` (the "what needs a reminder" query).
 - **`DeadlineSyncService`** — `@Service` with a `@Scheduled` method (`syncDeadlines`, daily at
-  01:00) that recomputes every business's deadlines from scratch via `RuleEngine` each run and
+  01:00 Singapore time — `zone = "Asia/Singapore"` explicitly, issue #28, not the server's own
+  default timezone) that recomputes every business's deadlines from scratch via `RuleEngine` each run and
   persists any not already stored, skipping ones that already exist so `reminderSent` isn't
   reset. Also exposes `findDueSoonAndUnreminded(referenceDate, daysAhead)`, which the dispatch
   step (`SqsDispatchService`) calls next to decide what actually gets pushed to the reminder
@@ -86,7 +87,7 @@ handling) live in [security.md](security.md), not here. Notification channel set
   constructor/getters/equals/hashCode) representing one reminder's JSON payload:
   `deadlineRecordId`, `businessId`, `obligationType`, `dueDate`.
 - **`SqsDispatchService`** — `@Service` with a `@Scheduled` method (`scheduledDispatch`, daily at
-  01:15, 15 minutes after the sync job) that calls `findDueSoonAndUnreminded`, serializes each
+  01:15 Singapore time, 15 minutes after the sync job — same explicit `zone` as above) that calls `findDueSoonAndUnreminded`, serializes each
   result to JSON via Jackson, and sends it as an SQS message. Deliberately does **not** mark
   `reminderSent` — that only happens in the worker, below, after a reminder is actually sent
   successfully, so a lost/failed message can still be retried rather than silently skipped.
