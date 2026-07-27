@@ -160,4 +160,49 @@ class BusinessIntegrationTest {
 
         assertEquals(HttpStatus.NO_CONTENT, deleteResponse.getStatusCode());
     }
+
+    // The tests below are real HTTP calls deliberately - @Valid is enforced by Spring MVC's
+    // argument resolution when the DispatcherServlet actually binds the request body, which
+    // calling a controller method directly in Java (as BusinessControllerTest does) never
+    // triggers at all. Only a real HTTP round trip can prove issue #20's validation works.
+
+    @Test
+    void createBusiness_withBlankName_isRejectedWith400() {
+        HttpHeaders headers = authHeaders(registerAndGetToken());
+        Business business = new Business();
+        business.setName("");
+        business.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
+
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                "/api/businesses", new HttpEntity<>(business, headers), String.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    }
+
+    @Test
+    void createBusiness_withNullFinancialYearEnd_isRejectedWith400() {
+        HttpHeaders headers = authHeaders(registerAndGetToken());
+        Business business = new Business();
+        business.setName("Valid Name");
+
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                "/api/businesses", new HttpEntity<>(business, headers), String.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    }
+
+    @Test
+    void updateBusiness_withBlankName_isRejectedWith400() {
+        HttpHeaders headers = authHeaders(registerAndGetToken());
+        Long businessId = createBusiness(headers, "Original Name");
+
+        Business updates = new Business();
+        updates.setName("");
+        updates.setFinancialYearEnd(LocalDate.of(2027, 3, 31));
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/businesses/" + businessId, HttpMethod.PUT, new HttpEntity<>(updates, headers), String.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    }
 }

@@ -2,6 +2,7 @@ package com.chrainx.compliance_tracker;
 
 import com.chrainx.compliance_tracker.rules.Deadline;
 import com.chrainx.compliance_tracker.rules.RuleEngine;
+import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -37,7 +38,7 @@ public class BusinessController {
     // SecurityContext as the authenticated principal - which we set to the actual User entity,
     // so this parameter just is the logged-in user, no extra lookup needed here.
     @PostMapping
-    public Business createBusiness(@RequestBody Business business, @AuthenticationPrincipal User currentUser) {
+    public Business createBusiness(@Valid @RequestBody Business business, @AuthenticationPrincipal User currentUser) {
         // business is bound straight from the request body, so a caller can supply an "id"
         // field of their own choosing. JPA's save() does an UPDATE (not an INSERT) whenever
         // the entity's id is non-null and already exists in the table - so without this,
@@ -80,7 +81,7 @@ public class BusinessController {
     // id and owner are never touched by anything the client sent, so there's no id/owner field
     // to even accidentally trust.
     @PutMapping("/{id}")
-    public ResponseEntity<Business> updateBusiness(@PathVariable Long id, @RequestBody Business updates,
+    public ResponseEntity<Business> updateBusiness(@PathVariable Long id, @Valid @RequestBody Business updates,
                                                     @AuthenticationPrincipal User currentUser) {
         Optional<Business> existing = businessRepository.findByIdAndOwnerId(id, currentUser.getId());
 

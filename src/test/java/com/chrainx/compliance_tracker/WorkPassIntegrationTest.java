@@ -139,4 +139,35 @@ class WorkPassIntegrationTest {
 
         assertEquals(HttpStatus.NOT_FOUND, deleteResponse.getStatusCode());
     }
+
+    // Real HTTP, deliberately - @Valid only runs during Spring MVC's request-body binding, which
+    // calling the controller method directly (as WorkPassControllerTest does) never exercises.
+    @Test
+    void createWorkPass_withBlankEmployeeName_isRejectedWith400() {
+        HttpHeaders headers = authHeaders(registerAndGetToken());
+        Long businessId = createBusiness(headers);
+
+        WorkPass pass = new WorkPass();
+        pass.setEmployeeName("");
+        pass.setExpiryDate(LocalDate.of(2026, 11, 1));
+
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                "/api/businesses/" + businessId + "/work-passes", new HttpEntity<>(pass, headers), String.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    }
+
+    @Test
+    void createWorkPass_withNullExpiryDate_isRejectedWith400() {
+        HttpHeaders headers = authHeaders(registerAndGetToken());
+        Long businessId = createBusiness(headers);
+
+        WorkPass pass = new WorkPass();
+        pass.setEmployeeName("Jane Doe");
+
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                "/api/businesses/" + businessId + "/work-passes", new HttpEntity<>(pass, headers), String.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    }
 }

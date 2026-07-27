@@ -2,6 +2,8 @@ package com.chrainx.compliance_tracker;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import java.time.LocalDate;
 
 @Entity
@@ -11,8 +13,15 @@ public class Business {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    // Bean Validation (issue #20) - checked whenever a Business is bound from a @Valid
+    // @RequestBody (create/update), not on every save - so id/owner above and gstRegistered
+    // below stay unannotated, they're never client-supplied for a create (id is cleared
+    // server-side, see #66) or don't need a "missing" case (a primitive boolean already can't
+    // be null).
+    @NotBlank
     private String name;
 
+    @NotNull
     private LocalDate financialYearEnd;
 
     private boolean gstRegistered;
