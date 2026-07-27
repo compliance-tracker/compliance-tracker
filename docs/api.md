@@ -12,12 +12,12 @@ table eventually being replaced by generated OpenAPI docs. Better here than move
 | POST   | `/api/auth/login`              | No             | Returns `{ token, refreshToken }` for an existing account — `429` after 5 failed attempts from the same IP within a minute |
 | POST   | `/api/auth/refresh`            | No*            | Exchanges a valid refresh token for a brand new `{ token, refreshToken }` pair — the old refresh token is revoked in the same call (single-use/rotated), so reusing it afterward gets `401`. `400` if no `Bearer` token was sent, `401` if it's missing/expired/revoked/not actually a refresh token. *Same permitAll caveat as logout below |
 | POST   | `/api/auth/logout`             | No*            | Revokes the caller's token immediately — `400` if no `Bearer` token was sent. *Not gated by `SecurityConfig` like other protected routes, but functionally requires a real token to do anything |
-| POST   | `/api/businesses`             | Yes            | Create a business, owned by the caller |
+| POST   | `/api/businesses`             | Yes            | Create a business, owned by the caller — `400` if `name` is blank or `financialYearEnd` is missing |
 | GET    | `/api/businesses`             | Yes            | List the caller's own businesses (not everyone's) |
-| PUT    | `/api/businesses/{id}`        | Yes            | Update name/financialYearEnd/gstRegistered — 404 if it doesn't exist or isn't yours |
+| PUT    | `/api/businesses/{id}`        | Yes            | Update name/financialYearEnd/gstRegistered — same `400` validation as create, `404` if it doesn't exist or isn't yours |
 | DELETE | `/api/businesses/{id}`        | Yes            | Delete a business — also deletes its work passes and computed deadlines (DB-level cascade). 404 if it doesn't exist or isn't yours |
 | GET    | `/api/businesses/{id}/deadlines` | Yes         | Compute and return that business's deadlines — 404 if it doesn't exist or isn't yours |
-| POST   | `/api/businesses/{id}/work-passes` | Yes      | Create a work pass under that business — 404 if the business doesn't exist or isn't yours |
+| POST   | `/api/businesses/{id}/work-passes` | Yes      | Create a work pass under that business — `400` if `employeeName` is blank or `expiryDate` is missing, `404` if the business doesn't exist or isn't yours |
 | GET    | `/api/businesses/{id}/work-passes` | Yes      | List work passes for that business — 404 if it doesn't exist or isn't yours |
 | DELETE | `/api/businesses/{id}/work-passes/{workPassId}` | Yes | Remove a work pass — 404 if either the business or the pass doesn't exist/belong to the caller |
 

@@ -33,12 +33,16 @@ handling) live in [security.md](security.md), not here. Notification channel set
 ## Domain layer
 
 - **`Business`** — entity representing an SME and the parameters its compliance deadlines are
-  computed from (`name`, `financialYearEnd`, `gstRegistered`).
+  computed from (`name`, `financialYearEnd`, `gstRegistered`). `name`/`financialYearEnd` carry
+  Bean Validation annotations (`@NotBlank`/`@NotNull`, issue #20), enforced via `@Valid` on the
+  `@RequestBody` in `BusinessController`'s create/update endpoints — a blank name or missing FYE
+  gets a `400` instead of silently persisting.
 - **`BusinessRepository`** — Spring Data JPA repository interface. Extending `JpaRepository`
   gives `save`/`findAll`/`findById`/etc. for free, with no method bodies written — Spring
   generates the implementation at runtime.
 - **`WorkPass`** — entity representing one employee's work pass (`employeeName`, `expiryDate`),
-  many-to-one linked back to the `Business` that employs them.
+  many-to-one linked back to the `Business` that employs them. Same Bean Validation treatment as
+  `Business` (issue #20) — a blank `employeeName` or missing `expiryDate` gets a `400`.
 - **`WorkPassRepository`** — Spring Data JPA repository. Includes `findByBusinessId(Long)`,
   whose implementation Spring derives entirely from the method name (no query written by hand).
 - **`RuleEngine`** — pure, unit-tested Java logic (`rules` package). Given a `Business`, its

@@ -1,5 +1,6 @@
 package com.chrainx.compliance_tracker;
 
+import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -26,7 +27,7 @@ public class WorkPassController {
     }
 
     @PostMapping
-    public ResponseEntity<WorkPass> createWorkPass(@PathVariable Long businessId, @RequestBody WorkPass workPass,
+    public ResponseEntity<WorkPass> createWorkPass(@PathVariable Long businessId, @Valid @RequestBody WorkPass workPass,
                                                     @AuthenticationPrincipal User currentUser) {
         Optional<Business> business = businessRepository.findByIdAndOwnerId(businessId, currentUser.getId());
         if (business.isEmpty()) {

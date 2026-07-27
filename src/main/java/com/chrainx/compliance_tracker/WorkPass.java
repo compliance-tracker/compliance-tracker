@@ -2,6 +2,8 @@ package com.chrainx.compliance_tracker;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import java.time.LocalDate;
 
 // Separate entity (not a field on Business) because one business can have many employees,
@@ -13,8 +15,11 @@ public class WorkPass {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    // Same reasoning as Business's fields (issue #20) - checked on @Valid @RequestBody binding.
+    @NotBlank
     private String employeeName;
 
+    @NotNull
     private LocalDate expiryDate;
 
     // Many WorkPass rows can point to the same Business (many-to-one).
