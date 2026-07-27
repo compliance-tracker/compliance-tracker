@@ -4,7 +4,7 @@ A compliance deadline tracker for Singapore SMEs. Tracks obligations like ACRA A
 GST filing, and work pass renewals, computes each business's actual due dates from its own
 parameters (e.g. Financial Year End), and dispatches automated reminders ahead of each deadline
 via a scheduled sync → SQS queue → worker pipeline. Reminders can be sent as real email (SMTP)
-or, by default, just logged — see "Notifications" below.
+or, by default, just logged — see [docs/notifications.md](docs/notifications.md).
 
 > **Disclaimer:** This is a reminder/tracking tool, not compliance advice. It is not a
 > substitute for consulting a qualified accountant or company secretary. Deadline rules are
@@ -30,223 +30,6 @@ business.
 | CI         | GitHub Actions                   |
 | Planned    | AWS ECS/Fargate + RDS (deployment) |
 
-## Architecture (current)
-
-```
-Client (curl/browser)
-        │
-        ├──► AuthController ──► JwtService / PasswordEncoder ──► User / app_user table
-        │         (register/login, no token required)
-        │
-        │  Authorization: Bearer <token>
-        ▼
-JwtAuthenticationFilter ──► SecurityConfig (401 if missing/invalid)
-        │
-        ▼                       @Scheduled 01:00      @Scheduled 01:15         poll every 30s
-BusinessController                     │                    │                        │
-(scoped to caller's own                ▼                    ▼                        ▼
- businesses only)              DeadlineSyncService ───► SqsDispatchService      ReminderWorkerService
-    │        │                       │      │                  │       │            │        │
-    ▼        ▼                       ▼      ▼                  ▼       ▼            ▼        ▼
-BusinessRepo  RuleEngine ◄────────────┘   DeadlineRecordRepo ◄──────────┴── AWS SQS ─┘   NotificationSender
-    │        (pure logic,                        │                    (LocalStack           │
-    ▼         no DB/HTTP dep)                    ▼                     locally,             ▼
-PostgreSQL (app_user, business, work_pass,     real AWS prod)   (logs only for now)
-            deadline_record)
-```
-
-- **`Business`** — entity representing an SME and the parameters its compliance deadlines are
-  computed from (`name`, `financialYearEnd`, `gstRegistered`).
-- **`BusinessRepository`** — Spring Data JPA repository interface. Extending `JpaRepository`
-  gives `save`/`findAll`/`findById`/etc. for free, with no method bodies written — Spring
-  generates the implementation at runtime.
-- **`WorkPass`** — entity representing one employee's work pass (`employeeName`, `expiryDate`),
-  many-to-one linked back to the `Business` that employs them.
-- **`WorkPassRepository`** — Spring Data JPA repository. Includes `findByBusinessId(Long)`,
-  whose implementation Spring derives entirely from the method name (no query written by hand).
-- **`RuleEngine`** — pure, unit-tested Java logic (`rules` package). Given a `Business`, its
-  `WorkPass`es, and a reference date, computes the list of currently-applicable `Deadline`s
-  (each an `ObligationType` + due `LocalDate`). Has no dependency on the database or HTTP layer,
-  and takes the reference date as a parameter rather than calling `LocalDate.now()` internally,
-  so tests are fully deterministic. Implements all three obligations: ACRA Annual Return, GST
-  F5, and Employment Pass renewal (one deadline per `WorkPass`).
-- **`BusinessController`** — exposes `POST /api/businesses` (create), `GET /api/businesses`
-  (list), and `GET /api/businesses/{id}/deadlines` (compute and return that business's current
-  deadlines via `RuleEngine`, including any work-pass renewals) over HTTP.
-- **`WorkPassController`** — exposes `POST`/`GET`/`DELETE` on `/api/businesses/{id}/work-passes`,
-  nested under the owning business — every operation first checks the business belongs to the
-  caller (same `findByIdAndOwnerId` scoping as `BusinessController`) before touching any work
-  pass at all.
-- **`HelloController`** — `GET /hello`, a minimal smoke-test endpoint from initial setup.
-- **`DeadlineRecord`** — persisted counterpart to `rules.Deadline`. Adds the one thing pure
-  computation can't carry: state, specifically `reminderSent`. `rules.Deadline` itself stays
-  a pure in-memory value with no DB knowledge.
-- **`DeadlineRecordRepository`** — Spring Data JPA repository for `DeadlineRecord`, including
-  `existsByBusinessIdAndObligationTypeAndDueDate` (dedupe check) and
-  `findByReminderSentFalseAndDueDateLessThanEqual` (the "what needs a reminder" query).
-- **`DeadlineSyncService`** — `@Service` with a `@Scheduled` method (`syncDeadlines`, daily at
-  01:00) that recomputes every business's deadlines from scratch via `RuleEngine` each run and
-  persists any not already stored, skipping ones that already exist so `reminderSent` isn't
-  reset. Also exposes `findDueSoonAndUnreminded(referenceDate, daysAhead)`, which the dispatch
-  step (`SqsDispatchService`) calls next to decide what actually gets pushed to the reminder
-  queue.
-- **`SqsConfig`** — `@Configuration` producing a single `SqsClient` `@Bean`. When
-  `aws.sqs.endpoint` is set (local dev), it points the client at LocalStack with throwaway
-  credentials; when unset (real AWS deployment), it falls back to the SDK's default credential
-  chain and endpoint resolution — same code, no branching logic needed to switch environments.
-- **`ReminderMessage`** — a Java `record` (concise immutable data class — auto-generates
-  constructor/getters/equals/hashCode) representing one reminder's JSON payload:
-  `deadlineRecordId`, `businessId`, `obligationType`, `dueDate`.
-- **`SqsDispatchService`** — `@Service` with a `@Scheduled` method (`scheduledDispatch`, daily at
-  01:15, 15 minutes after the sync job) that calls `findDueSoonAndUnreminded`, serializes each
-  result to JSON via Jackson, and sends it as an SQS message. Deliberately does **not** mark
-  `reminderSent` — that only happens in the worker, below, after a reminder is actually sent
-  successfully, so a lost/failed message can still be retried rather than silently skipped.
-  Verified with a real integration test (`SqsDispatchIntegrationTest`) that boots the full app
-  and confirms a message actually lands in a real SQS queue (LocalStack locally).
-- **`NotificationSender`** — interface for "how a reminder actually reaches a business."
-  Kept separate from the worker so the real channel can be swapped in without touching the
-  queue-consuming/idempotency logic. Two implementations, chosen via `notifications.channel`:
-  - **`LoggingNotificationSender`** (default) — just logs. Needs no credentials at all, active
-    whenever `notifications.channel` isn't explicitly `email` — this is what keeps CI and local
-    dev working with zero mail setup.
-  - **`EmailNotificationSender`** (`notifications.channel=email`) — sends a real email via SMTP
-    (Spring's `JavaMailSender`) to the business owner's registered email address. Configured for
-    Gmail SMTP by default (`spring.mail.*` in `application.properties`) using an app password,
-    not a real account password. See "Notifications" below for setup.
-- **`ReminderWorkerService`** — `@Service`, polls SQS every 30s (`pollAndProcess`,
-  `@Scheduled(fixedDelay = 30_000)`). For each message: looks up the `DeadlineRecord`, and if
-  it's not already `reminderSent` (the actual idempotency check — handles a message being
-  redelivered after a prior successful send), calls `NotificationSender` and marks it sent.
-  The SQS message is deleted **only after** the DB write succeeds — so a crash mid-processing
-  leaves the message in the queue to be retried automatically once SQS's visibility timeout
-  expires, rather than silently losing the reminder. Each message is processed in its own
-  try/catch so one failing message doesn't block the rest of the batch — a failure is logged
-  and the message is deliberately left undeleted, letting SQS's own retry/dead-letter mechanism
-  (below) take over. Verified with a real integration test (`ReminderWorkerIntegrationTest`)
-  covering the full sync → dispatch → worker pipeline against real Postgres + real (local) SQS.
-- **`SchedulingConfig`** — `@Configuration` holding `@EnableScheduling`, gated behind
-  `scheduling.enabled` (default `true`). Exists so tests can turn scheduling off entirely
-  (`scheduling.enabled=false` in `application-test.properties`, via `@ActiveProfiles("test")`)
-  — without this, `@SpringBootTest` boots the real background jobs, and once
-  `ReminderWorkerService` existed its real poller started racing integration tests for the
-  messages they'd just enqueued, a genuine (not flaky) test failure this fixed.
-
-### Authentication
-
-- **`User`** — entity for a registered account (`email`, `passwordHash`). Table name is
-  `app_user`, not `user` — a reserved word in Postgres.
-- **`Business.owner`** — every business now belongs to exactly one `User`
-  (`@ManyToOne`, `@JsonIgnore` so the owner — including their password hash — never gets
-  serialized into an API response).
-- **`JwtService`** — generates and verifies signed tokens (HMAC-SHA256, via `jjwt`). A JWT's
-  payload (the user's email) is readable by anyone, not encrypted — the signature is what
-  makes it trustworthy, since only the server holding the signing secret can produce one that
-  verifies.
-- **`JwtAuthenticationFilter`** — runs once per request, reads `Authorization: Bearer <token>`,
-  and if valid, populates Spring Security's context with the corresponding `User` as the
-  authenticated principal.
-- **`SecurityConfig`** — stateless (`SessionCreationPolicy.STATELESS`, no cookies/sessions at
-  all), CSRF disabled (irrelevant for a token-based API), `/hello` and `/api/auth/**` open,
-  everything else requires a valid token. Returns `401` (not Spring Security's 403 default) for
-  missing/invalid auth via a custom `AuthenticationEntryPoint`.
-- **`AuthController`** — `POST /api/auth/register` and `POST /api/auth/login`, both returning
-  a JWT. Passwords are hashed with BCrypt, never stored or compared in plain text. Login
-  returns the same `401` whether the email doesn't exist or the password is wrong — revealing
-  which one it was would let an attacker enumerate registered emails. Login is also rate
-  limited via `LoginRateLimiter` — 5 failed attempts per IP per minute, then `429 Too Many
-  Requests` (including for the correct password, until the window resets). Registration checks
-  for an existing email up front, but also catches the DB's own unique-constraint violation
-  around the actual save — two concurrent registrations for the same email resolve to exactly
-  one `200` and one clean `409`, never an unhandled `500` (issue #42). `POST /api/auth/logout`
-  revokes the caller's own token via `TokenBlocklist`, checked by `JwtAuthenticationFilter` on
-  every subsequent request — a JWT normally stays valid until it naturally expires even after
-  "logout," this makes that untrue (issue #41).
-- **`BusinessController`** — every method now scopes to `@AuthenticationPrincipal User`:
-  `createBusiness` sets the owner automatically; `getAllBusinesses`/`getDeadlines` only
-  ever return the current user's own businesses (`findByOwnerId`/`findByIdAndOwnerId`). A
-  business that exists but belongs to someone else returns a plain `404`, not `403` —
-  confirming "this ID exists, it's just not yours" leaks more than a flat "not found."
-
-Verified two ways: `BusinessControllerTest`/`AuthControllerTest`/`JwtServiceTest` at the Java
-method level (mocked dependencies), and `AuthIntegrationTest` at the real HTTP level (boots the
-actual app, makes real requests via `TestRestTemplate`) — the latter is what actually proves
-`SecurityConfig`'s rules work, since calling a controller method directly bypasses the security
-filter chain entirely.
-
-### Dead-letter handling
-
-The main queue (`compliance-reminders`) has a **redrive policy**: after `maxReceiveCount: 3`
-failed receives (a message repeatedly not deleted, i.e. repeatedly failing in
-`ReminderWorkerService`), SQS automatically moves it to `compliance-reminders-dlq` — no
-application code is involved in the move itself, it's queue configuration. This was manually
-verified against LocalStack (simulating 3 failed receives via `change-message-visibility`,
-confirming the message lands in the DLQ) rather than covered by an automated test, since
-reproducing it end-to-end would mean waiting out real SQS visibility timeouts or adding
-test-only timing hooks not worth the complexity here.
-
-### Local development: LocalStack
-
-No AWS account is needed for local dev. [LocalStack](https://www.localstack.cloud/) emulates
-SQS on your machine — CI runs the same way. Pinned to `3.8.1`: newer LocalStack versions require
-a paid license/auth token even for SQS on the free tier.
-
-```bash
-docker run --name compliance-localstack -e SERVICES=sqs -p 4566:4566 -d localstack/localstack:3.8.1
-
-AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 \
-  --region us-east-1 sqs create-queue --queue-name compliance-reminders
-
-# Dead-letter queue + redrive policy (see "Dead-letter handling" above)
-AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 \
-  --region us-east-1 sqs create-queue --queue-name compliance-reminders-dlq
-
-DLQ_ARN=$(AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 \
-  --region us-east-1 sqs get-queue-attributes \
-  --queue-url http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/compliance-reminders-dlq \
-  --attribute-names QueueArn --query "Attributes.QueueArn" --output text)
-
-AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 \
-  --region us-east-1 sqs set-queue-attributes \
-  --queue-url http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/compliance-reminders \
-  --attributes "{\"RedrivePolicy\":\"{\\\"deadLetterTargetArn\\\":\\\"$DLQ_ARN\\\",\\\"maxReceiveCount\\\":\\\"3\\\"}\"}"
-```
-
-### Database migrations: Flyway
-
-Schema changes are managed by Flyway (`src/main/resources/db/migration/`), not
-`spring.jpa.hibernate.ddl-auto`. `ddl-auto` is set to `validate` — Hibernate checks the DB
-schema matches the `@Entity` classes at startup and fails loudly if not, but never mutates
-the schema itself. `update` was convenient for early solo dev but unsafe against a database
-with real data (e.g. renaming a field could silently drop a column) — this had to change
-before real deployment (issue #7).
-
-**Note:** Spring Boot 4 split per-technology autoconfiguration into separate starters — plain
-`flyway-core` on the classpath is no longer enough to trigger Flyway's autoconfiguration; it
-needs the dedicated `spring-boot-starter-flyway` module (see `pom.xml`).
-
-### Planned (not built yet — see [open issues](https://github.com/Chrainx/compliance-tracker/issues))
-
-- **DLQ monitoring/alerting** — currently, a message that lands in the dead-letter queue is
-  silent; nothing surfaces it. Would need at minimum a way to inspect DLQ depth.
-- **Input validation** — `spring-boot-starter-validation` has been a dependency since day one
-  but is never actually used; no `@Valid` annotations exist anywhere yet.
-- **API documentation** (OpenAPI/Swagger) — currently only this manually-maintained table below.
-- **Cloud deployment** — AWS ECS/Fargate + RDS, replacing local Docker Postgres; switch
-  `aws.sqs.endpoint` off to use real AWS.
-- **Load testing** — real throughput/latency numbers against the deployed system.
-
-### Compliance rules
-
-| Obligation | Rule | Source | Status |
-|---|---|---|---|
-| ACRA Annual Return | `financialYearEnd + 7 months`, recurring annually | [ACRA — Deadline & requirements](https://www.acra.gov.sg/manage/companies/legal-requirements-common-offences/filing-annual-returns-companies/deadline-requirements/) | Implemented. Listed-company variant (5/6 months) not modeled — SME target audience is virtually always private/non-listed |
-| GST F5 filing | `calendarQuarterEnd + 1 month` | [IRAS — Due dates and extensions](https://www.iras.gov.sg/taxes/goods-services-tax-(gst)/filing-gst/due-dates-and-requests-for-extension) | Implemented. Assumes standard calendar quarters; IRAS actually assigns a per-business cycle at GST registration which may not align to calendar quarters |
-| Employment Pass renewal | `= passExpiryDate` (renewal window opens 6 months prior, no grace period after expiry) | [MOM — Renew a Pass (Employment Pass)](https://www.mom.gov.sg/passes-and-permits/employment-pass/renew-a-pass) | Implemented, via `WorkPass` entity — one deadline per employee pass |
-
-This is a reminder/tracking tool, not compliance advice — always verify against the official
-source before relying on a date (see disclaimer above).
-
 ## Running locally
 
 Requires Java 21, Maven, and Docker.
@@ -256,8 +39,8 @@ Requires Java 21, Maven, and Docker.
 docker run --name compliance-postgres -e POSTGRES_PASSWORD=devpassword \
   -e POSTGRES_DB=compliance_tracker -p 5434:5432 -d postgres:16
 
-# 2. Start LocalStack (emulates AWS SQS - see "Local development: LocalStack" below for the
-#    full setup including the dead-letter queue)
+# 2. Start LocalStack (emulates AWS SQS - see docs/architecture.md for the full setup
+#    including the dead-letter queue)
 docker run --name compliance-localstack -e SERVICES=sqs -p 4566:4566 -d localstack/localstack:3.8.1
 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 \
   --region us-east-1 sqs create-queue --queue-name compliance-reminders
@@ -266,70 +49,24 @@ AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://loca
 ./mvnw spring-boot:run
 ```
 
-The app will be available at `http://localhost:8081`.
+The app will be available at `http://localhost:8081`. If either container was already created
+in a previous session, `docker start compliance-postgres` / `docker start compliance-localstack`
+instead of `docker run` — but LocalStack's queue state does **not** survive a restart, so
+re-run the `create-queue` step regardless (see docs/architecture.md for the full DLQ setup too).
 
-## Security note: secrets
+`jwt.secret`/`spring.datasource.password` default to placeholder values safe for local/CI use
+only — see [docs/security.md](docs/security.md) before deploying this anywhere real.
 
-`jwt.secret` and `spring.datasource.password` both default to placeholder values checked into
-`application.properties` (`devpassword` / a generated-but-committed JWT key) — these only ever
-match the local Docker/CI Postgres containers above, but they're still in this public repo's
-git history, so treat them as permanently public, not actually secret. Both are overridable via
-env var (`JWT_SECRET` / `DB_PASSWORD`) without touching the defaults — a real deployment
-**must** set fresh values this way (ideally via a real secret store like AWS Secrets Manager,
-not another committed property), generated the same way as the placeholders:
+## Compliance rules
 
-```bash
-openssl rand -base64 32
-```
+| Obligation | Rule | Source | Status |
+|---|---|---|---|
+| ACRA Annual Return | `financialYearEnd + 7 months`, recurring annually | [ACRA — Deadline & requirements](https://www.acra.gov.sg/manage/companies/legal-requirements-common-offences/filing-annual-returns-companies/deadline-requirements/) | Implemented. Listed-company variant (5/6 months) not modeled — SME target audience is virtually always private/non-listed |
+| GST F5 filing | `calendarQuarterEnd + 1 month` | [IRAS — Due dates and extensions](https://www.iras.gov.sg/taxes/goods-services-tax-(gst)/filing-gst/due-dates-and-requests-for-extension) | Implemented. Assumes standard calendar quarters; IRAS actually assigns a per-business cycle at GST registration which may not align to calendar quarters |
+| Employment Pass renewal | `= passExpiryDate` (renewal window opens 6 months prior, no grace period after expiry) | [MOM — Renew a Pass (Employment Pass)](https://www.mom.gov.sg/passes-and-permits/employment-pass/renew-a-pass) | Implemented, via `WorkPass` entity — one deadline per employee pass |
 
-## Notifications
-
-Reminders are just logged by default — nothing to configure, safe for CI/local dev. To actually
-send real emails instead:
-
-1. Generate a Gmail **app password** at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
-   (requires 2-Step Verification enabled first). Don't use your real account password — Gmail
-   rejects plain-password SMTP login outright once 2FA is on, and an app password can be
-   revoked independently later without touching the real login.
-2. Set these before starting the app:
-   ```bash
-   export MAIL_USERNAME=youraddress@gmail.com
-   export MAIL_APP_PASSWORD=the-16-character-app-password
-   export NOTIFICATIONS_CHANNEL=email
-   ./mvnw spring-boot:run
-   ```
-3. Reminders now send to whatever email each business's owner registered with, from
-   `MAIL_USERNAME`.
-
-Any SMTP provider works, not just Gmail — override `spring.mail.host`/`spring.mail.port` in
-`application.properties` (or as env vars) if using a different one.
-
-### Previewing emails locally without a real account (Mailpit)
-
-To see exactly what a reminder email looks like during local dev, without touching Gmail or any
-real account at all, point the app at [Mailpit](https://mailpit.axllent.org) instead — a fake
-local SMTP server with a web UI showing every email it "received":
-
-```bash
-docker run --name compliance-mailpit -p 1025:1025 -p 8025:8025 -d axllent/mailpit
-
-MAIL_HOST=localhost MAIL_PORT=1025 MAIL_SMTP_AUTH=false MAIL_SMTP_STARTTLS=false \
-  MAIL_FROM=reminders@compliance-tracker.test NOTIFICATIONS_CHANNEL=email \
-  ./mvnw spring-boot:run
-```
-
-Open `http://localhost:8025` to see every email the app sends land there instantly — nothing
-leaves your machine, no credentials of any kind needed. Verified working end to end while
-building #17: a real email arrived with the correct sender, recipient, subject, and body.
-
-If either container was already created in a previous session, `docker start compliance-postgres`
-/ `docker start compliance-localstack` instead of `docker run` — otherwise `docker run` will
-fail with a "name already in use" error.
-
-**Note:** LocalStack's queue state is in-memory and does **not** survive a container restart
-(`docker start` after it was stopped) — `docker ps` showing it "Up" doesn't mean the queue still
-exists. Re-run the `create-queue` command (and the DLQ setup below) any time LocalStack was
-previously stopped, even if reusing the same container.
+This is a reminder/tracking tool, not compliance advice — always verify against the official
+source before relying on a date (see disclaimer above).
 
 ## API
 
@@ -375,12 +112,17 @@ don't run and race the tests' own explicit calls — see `SchedulingConfig`. The
 classes (including `AuthControllerTest`, `JwtServiceTest`) are plain unit tests with no such
 dependency.
 
+## More docs
+
+- [docs/architecture.md](docs/architecture.md) — how the pieces fit together: domain layer, web
+  layer, the sync → dispatch → worker reminder pipeline, dead-letter handling, Flyway migrations,
+  what's planned but not built yet.
+- [docs/security.md](docs/security.md) — auth model, login rate limiting, token revocation,
+  secrets handling, and the security-relevant bugs found and fixed (including a critical IDOR).
+- [docs/notifications.md](docs/notifications.md) — configuring real email (Gmail SMTP) or
+  previewing emails locally with Mailpit.
+
 ## Status
 
-Actively in development. See [open issues](https://github.com/Chrainx/compliance-tracker/issues)
+Actively in development. See [open issues](https://github.com/compliance-tracker/compliance-tracker/issues)
 for the current roadmap.
-
-**Security note:** a critical IDOR was found and fixed in `POST /api/businesses` — the endpoint
-accepted a client-supplied `id` on create, which JPA's `save()` treated as an update, letting any
-authenticated user overwrite (and take ownership of) another user's business. Fixed by clearing
-the id server-side before saving (issue #66).
