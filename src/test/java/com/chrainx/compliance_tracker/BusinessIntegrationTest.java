@@ -35,7 +35,7 @@ class BusinessIntegrationTest {
     private String registerAndGetToken() {
         String email = "business-e2e-" + System.nanoTime() + "@example.com";
         return restTemplate.postForEntity(
-                        "/api/auth/register", new AuthRequest(email, "a-real-password"), AuthResponse.class)
+                        "/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class)
                 .getBody().token();
     }
 

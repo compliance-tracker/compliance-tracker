@@ -76,7 +76,7 @@ class AuthIntegrationTest {
         String email = "auth-e2e-" + System.nanoTime() + "@example.com";
 
         ResponseEntity<AuthResponse> registerResponse = restTemplate.postForEntity(
-                "/api/auth/register", new AuthRequest(email, "a-real-password"), AuthResponse.class);
+                "/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class);
         assertEquals(HttpStatus.OK, registerResponse.getStatusCode());
         String token = registerResponse.getBody().token();
 
@@ -113,10 +113,10 @@ class AuthIntegrationTest {
         String emailB = "auth-e2e-idor-b-" + System.nanoTime() + "@example.com";
 
         String tokenA = restTemplate.postForEntity(
-                "/api/auth/register", new AuthRequest(emailA, "a-real-password"), AuthResponse.class)
+                "/api/auth/register", new AuthRequest(emailA, "a-real-password1"), AuthResponse.class)
                 .getBody().token();
         String tokenB = restTemplate.postForEntity(
-                "/api/auth/register", new AuthRequest(emailB, "a-real-password"), AuthResponse.class)
+                "/api/auth/register", new AuthRequest(emailB, "a-real-password1"), AuthResponse.class)
                 .getBody().token();
 
         HttpHeaders headersA = new HttpHeaders();
@@ -165,7 +165,7 @@ class AuthIntegrationTest {
         // 400 response - it fell through to the 401 AuthenticationEntryPoint instead.
         String email = "auth-e2e-malformed-id-" + System.nanoTime() + "@example.com";
         String token = restTemplate.postForEntity(
-                "/api/auth/register", new AuthRequest(email, "a-real-password"), AuthResponse.class)
+                "/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class)
                 .getBody().token();
 
         HttpHeaders headers = new HttpHeaders();
@@ -184,7 +184,7 @@ class AuthIntegrationTest {
         // (NoHandlerFoundException) should 404, not be misreported as 401.
         String email = "auth-e2e-unmapped-path-" + System.nanoTime() + "@example.com";
         String token = restTemplate.postForEntity(
-                "/api/auth/register", new AuthRequest(email, "a-real-password"), AuthResponse.class)
+                "/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class)
                 .getBody().token();
 
         HttpHeaders headers = new HttpHeaders();
@@ -202,7 +202,7 @@ class AuthIntegrationTest {
     @DirtiesContext(methodMode = DirtiesContext.MethodMode.AFTER_METHOD)
     void repeatedFailedLogins_fromSameIp_getRateLimitedWith429() {
         String email = "auth-e2e-ratelimit-" + System.nanoTime() + "@example.com";
-        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "correct-password"), AuthResponse.class);
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "correct-password1"), AuthResponse.class);
 
         for (int i = 0; i < 5; i++) {
             ResponseEntity<AuthResponse> response = restTemplate.postForEntity(
@@ -219,7 +219,7 @@ class AuthIntegrationTest {
     @Test
     void login_withWrongPassword_isRejected() {
         String email = "auth-e2e-wrongpass-" + System.nanoTime() + "@example.com";
-        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "correct-password"), AuthResponse.class);
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "correct-password1"), AuthResponse.class);
 
         ResponseEntity<AuthResponse> loginResponse = restTemplate.postForEntity(
                 "/api/auth/login", new AuthRequest(email, "wrong-password"), AuthResponse.class);
@@ -236,7 +236,7 @@ class AuthIntegrationTest {
         // the chance of actually reproducing the race window (both see "no such email yet"
         // before either commits) rather than one just happening to finish first every time.
         String email = "auth-e2e-race-" + System.nanoTime() + "@example.com";
-        AuthRequest request = new AuthRequest(email, "a-real-password");
+        AuthRequest request = new AuthRequest(email, "a-real-password1");
 
         ExecutorService executor = Executors.newFixedThreadPool(2);
         CountDownLatch startLine = new CountDownLatch(1);
@@ -280,7 +280,7 @@ class AuthIntegrationTest {
         // endpoint returns 200.
         String email = "auth-e2e-logout-" + System.nanoTime() + "@example.com";
         String token = restTemplate.postForEntity(
-                        "/api/auth/register", new AuthRequest(email, "a-real-password"), AuthResponse.class)
+                        "/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class)
                 .getBody().token();
 
         HttpHeaders headers = new HttpHeaders();
@@ -314,7 +314,7 @@ class AuthIntegrationTest {
         // afterward - not just that the endpoint returned 200.
         String email = "auth-e2e-refresh-" + System.nanoTime() + "@example.com";
         AuthResponse original = restTemplate.postForEntity(
-                "/api/auth/register", new AuthRequest(email, "a-real-password"), AuthResponse.class).getBody();
+                "/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class).getBody();
 
         HttpHeaders refreshHeaders = new HttpHeaders();
         refreshHeaders.setBearerAuth(original.refreshToken());
@@ -341,7 +341,7 @@ class AuthIntegrationTest {
     void refreshToken_cannotBeUsedAsAnAccessToken() {
         String email = "auth-e2e-refresh-as-access-" + System.nanoTime() + "@example.com";
         String refreshToken = restTemplate.postForEntity(
-                "/api/auth/register", new AuthRequest(email, "a-real-password"), AuthResponse.class)
+                "/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class)
                 .getBody().refreshToken();
 
         HttpHeaders headers = new HttpHeaders();
@@ -357,7 +357,7 @@ class AuthIntegrationTest {
     void accessToken_cannotBeUsedToRefresh() {
         String email = "auth-e2e-access-as-refresh-" + System.nanoTime() + "@example.com";
         String accessToken = restTemplate.postForEntity(
-                "/api/auth/register", new AuthRequest(email, "a-real-password"), AuthResponse.class)
+                "/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class)
                 .getBody().token();
 
         HttpHeaders headers = new HttpHeaders();

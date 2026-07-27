@@ -29,6 +29,10 @@ public class AuthController {
 
     @PostMapping("/register")
     public ResponseEntity<AuthResponse> register(@RequestBody AuthRequest request) {
+        if (isTooWeak(request.password())) {
+            return ResponseEntity.status(400).build();
+        }
+
         if (userRepository.findByEmail(request.email()).isPresent()) {
             return ResponseEntity.status(409).build();
         }
@@ -136,5 +140,21 @@ public class AuthController {
             return null;
         }
         return authHeader.substring("Bearer ".length());
+    }
+
+    // Checked only in register - AuthRequest is shared with login, and this must never reject a
+    // login attempt for an existing account whose password predates this check (issue #43).
+    // Deliberately minimal (length + one letter + one digit, not a full complexity ruleset) -
+    // enough to stop trivially weak passwords ("a", "12345") without frustrating real users with
+    // demands for special characters/mixed case that don't meaningfully improve security here.
+    private static final int MIN_PASSWORD_LENGTH = 8;
+
+    private boolean isTooWeak(String password) {
+        if (password == null || password.length() < MIN_PASSWORD_LENGTH) {
+            return true;
+        }
+        boolean hasLetter = password.chars().anyMatch(Character::isLetter);
+        boolean hasDigit = password.chars().anyMatch(Character::isDigit);
+        return !hasLetter || !hasDigit;
     }
 }
