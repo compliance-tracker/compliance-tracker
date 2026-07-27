@@ -51,7 +51,8 @@ public class AuthController {
             return ResponseEntity.status(409).build();
         }
 
-        return ResponseEntity.ok(new AuthResponse(jwtService.generateToken(user.getEmail())));
+        return ResponseEntity.ok(new AuthResponse(
+                jwtService.generateAccessToken(user.getEmail()), jwtService.generateRefreshToken(user.getEmail())));
     }
 
     @PostMapping("/login")
@@ -74,7 +75,42 @@ public class AuthController {
         }
 
         loginRateLimiter.recordSuccess(clientIp);
-        return ResponseEntity.ok(new AuthResponse(jwtService.generateToken(user.getEmail())));
+        return ResponseEntity.ok(new AuthResponse(
+                jwtService.generateAccessToken(user.getEmail()), jwtService.generateRefreshToken(user.getEmail())));
+    }
+
+    // Exchanges a valid, not-yet-used refresh token for a brand new access + refresh token pair
+    // (issue #26) - lets a session keep going past the access token's own expiry without the
+    // user logging in again. The refresh token is single-use: rotated (revoked, then replaced)
+    // on every successful call, so a leaked refresh token can be ridden at most once before
+    // reuse fails outright, rather than remaining valid indefinitely until its own expiry.
+    @PostMapping("/refresh")
+    public ResponseEntity<AuthResponse> refresh(HttpServletRequest httpRequest) {
+        String refreshToken = extractBearerToken(httpRequest);
+        if (refreshToken == null) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        if (tokenBlocklist.isRevoked(refreshToken) || !jwtService.isRefreshToken(refreshToken)) {
+            return ResponseEntity.status(401).build();
+        }
+
+        String email = jwtService.extractEmail(refreshToken);
+        if (email == null) {
+            return ResponseEntity.status(401).build();
+        }
+
+        var user = userRepository.findByEmail(email).orElse(null);
+        if (user == null) {
+            // The account this refresh token was issued for no longer exists - nothing to
+            // refresh into.
+            return ResponseEntity.status(401).build();
+        }
+
+        tokenBlocklist.revoke(refreshToken);
+
+        return ResponseEntity.ok(new AuthResponse(
+                jwtService.generateAccessToken(email), jwtService.generateRefreshToken(email)));
     }
 
     // No @RequestBody - unlike register/login, logout needs no credentials, only the token
@@ -84,14 +120,21 @@ public class AuthController {
     // as a plain 400 rather than SecurityConfig rejecting it with a 401 first.
     @PostMapping("/logout")
     public ResponseEntity<Void> logout(HttpServletRequest httpRequest) {
-        String authHeader = httpRequest.getHeader("Authorization");
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+        String token = extractBearerToken(httpRequest);
+        if (token == null) {
             return ResponseEntity.badRequest().build();
         }
 
-        String token = authHeader.substring("Bearer ".length());
         tokenBlocklist.revoke(token);
 
         return ResponseEntity.ok().build();
+    }
+
+    private String extractBearerToken(HttpServletRequest httpRequest) {
+        String authHeader = httpRequest.getHeader("Authorization");
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            return null;
+        }
+        return authHeader.substring("Bearer ".length());
     }
 }

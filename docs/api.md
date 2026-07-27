@@ -1,16 +1,16 @@
 # API reference
 
 Split into its own file rather than kept in the main README — the API surface is expected to
-grow (business update/delete, admin rule endpoints, password reset, email verification, JWT
-refresh are all tracked/designed but not built yet), and issue #21 already anticipates this
-manually-maintained table eventually being replaced by generated OpenAPI docs. Better here than
-moved twice.
+grow (business update/delete, admin rule endpoints, password reset, email verification are all
+tracked/designed but not built yet), and issue #21 already anticipates this manually-maintained
+table eventually being replaced by generated OpenAPI docs. Better here than moved twice.
 
 | Method | Path                          | Auth required | Description                    |
 |--------|-------------------------------|----------------|---------------------------------|
 | GET    | `/hello`                      | No             | Smoke-test endpoint             |
-| POST   | `/api/auth/register`          | No             | Create an account, returns a JWT |
-| POST   | `/api/auth/login`              | No             | Returns a JWT for an existing account — `429` after 5 failed attempts from the same IP within a minute |
+| POST   | `/api/auth/register`          | No             | Create an account, returns `{ token, refreshToken }` |
+| POST   | `/api/auth/login`              | No             | Returns `{ token, refreshToken }` for an existing account — `429` after 5 failed attempts from the same IP within a minute |
+| POST   | `/api/auth/refresh`            | No*            | Exchanges a valid refresh token for a brand new `{ token, refreshToken }` pair — the old refresh token is revoked in the same call (single-use/rotated), so reusing it afterward gets `401`. `400` if no `Bearer` token was sent, `401` if it's missing/expired/revoked/not actually a refresh token. *Same permitAll caveat as logout below |
 | POST   | `/api/auth/logout`             | No*            | Revokes the caller's token immediately — `400` if no `Bearer` token was sent. *Not gated by `SecurityConfig` like other protected routes, but functionally requires a real token to do anything |
 | POST   | `/api/businesses`             | Yes            | Create a business, owned by the caller |
 | GET    | `/api/businesses`             | Yes            | List the caller's own businesses (not everyone's) |

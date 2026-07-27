@@ -22,7 +22,7 @@ class AuthControllerTest {
     // Real JwtService (not mocked) - it's cheap, deterministic, and testing against a mock
     // would just be testing that the mock returns what we told it to.
     private final JwtService jwtService = new JwtService(
-            "04r6vb/78+5VZS4jQPmJ1P669O0ZxGQ5veyDTW+QpW4=", 86_400_000L);
+            "04r6vb/78+5VZS4jQPmJ1P669O0ZxGQ5veyDTW+QpW4=", 86_400_000L, 604_800_000L);
     // Real LoginRateLimiter (not mocked) - same reasoning as JwtService above, and a fresh
     // instance per test method (JUnit 5 creates a new test instance for each @Test by default)
     // means no attempt counts leak between tests.
@@ -48,6 +48,9 @@ class AuthControllerTest {
         assertEquals(200, response.getStatusCode().value());
         assertNotNull(response.getBody().token());
         assertEquals("new@example.com", jwtService.extractEmail(response.getBody().token()));
+        assertFalse(jwtService.isRefreshToken(response.getBody().token()));
+        assertNotNull(response.getBody().refreshToken());
+        assertTrue(jwtService.isRefreshToken(response.getBody().refreshToken()));
     }
 
     @Test
@@ -87,6 +90,7 @@ class AuthControllerTest {
 
         assertEquals(200, response.getStatusCode().value());
         assertEquals("owner@example.com", jwtService.extractEmail(response.getBody().token()));
+        assertTrue(jwtService.isRefreshToken(response.getBody().refreshToken()));
     }
 
     @Test
@@ -177,7 +181,7 @@ class AuthControllerTest {
 
     @Test
     void logout_revokesTheToken() {
-        String token = jwtService.generateToken("owner@example.com");
+        String token = jwtService.generateAccessToken("owner@example.com");
 
         ResponseEntity<Void> response = controller.logout(requestWithAuthHeader("Bearer " + token));
 
@@ -195,6 +199,68 @@ class AuthControllerTest {
     @Test
     void logout_returns400_whenHeaderDoesNotStartWithBearer() {
         ResponseEntity<Void> response = controller.logout(requestWithAuthHeader("Basic somecreds"));
+
+        assertEquals(400, response.getStatusCode().value());
+    }
+
+    @Test
+    void refresh_issuesANewAccessAndRefreshToken_forAValidRefreshToken() {
+        User user = new User();
+        user.setEmail("owner@example.com");
+        when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
+        String refreshToken = jwtService.generateRefreshToken("owner@example.com");
+
+        ResponseEntity<AuthResponse> response = controller.refresh(requestWithAuthHeader("Bearer " + refreshToken));
+
+        assertEquals(200, response.getStatusCode().value());
+        assertEquals("owner@example.com", jwtService.extractEmail(response.getBody().token()));
+        assertFalse(jwtService.isRefreshToken(response.getBody().token()));
+        assertTrue(jwtService.isRefreshToken(response.getBody().refreshToken()));
+    }
+
+    @Test
+    void refresh_revokesTheOldRefreshToken_soItCannotBeReused() {
+        // The actual rotation behaviour (issue #26): a refresh token is single-use. Reusing one
+        // that's already been exchanged must fail, the same way a stolen-and-already-used one
+        // would for an attacker who got there second.
+        User user = new User();
+        user.setEmail("owner@example.com");
+        when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
+        String refreshToken = jwtService.generateRefreshToken("owner@example.com");
+
+        controller.refresh(requestWithAuthHeader("Bearer " + refreshToken));
+        ResponseEntity<AuthResponse> secondAttempt = controller.refresh(requestWithAuthHeader("Bearer " + refreshToken));
+
+        assertEquals(401, secondAttempt.getStatusCode().value());
+    }
+
+    @Test
+    void refresh_returns401_whenGivenAnAccessTokenInstead() {
+        // The other half of the type-separation check: an access token must not work as a
+        // refresh token either, or the distinction between the two is meaningless.
+        User user = new User();
+        user.setEmail("owner@example.com");
+        when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
+        String accessToken = jwtService.generateAccessToken("owner@example.com");
+
+        ResponseEntity<AuthResponse> response = controller.refresh(requestWithAuthHeader("Bearer " + accessToken));
+
+        assertEquals(401, response.getStatusCode().value());
+    }
+
+    @Test
+    void refresh_returns401_whenTheAccountNoLongerExists() {
+        when(userRepository.findByEmail("deleted@example.com")).thenReturn(Optional.empty());
+        String refreshToken = jwtService.generateRefreshToken("deleted@example.com");
+
+        ResponseEntity<AuthResponse> response = controller.refresh(requestWithAuthHeader("Bearer " + refreshToken));
+
+        assertEquals(401, response.getStatusCode().value());
+    }
+
+    @Test
+    void refresh_returns400_whenNoAuthorizationHeaderPresent() {
+        ResponseEntity<AuthResponse> response = controller.refresh(requestWithAuthHeader(null));
 
         assertEquals(400, response.getStatusCode().value());
     }
