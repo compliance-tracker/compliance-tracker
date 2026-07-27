@@ -77,6 +77,19 @@ exists — shortening it before the frontend actually implements silent/automati
 just make the current UI log users out more often, a regression with no offsetting benefit yet.
 Tightening it is a natural follow-up once the frontend half of this is built.
 
+## CORS on every response, including rejections (issue #83)
+
+CORS is configured via a `CorsConfigurationSource` bean, wired into `SecurityConfig` via
+`.cors(Customizer.withDefaults())` rather than a plain `WebMvcConfigurer.addCorsMappings(...)`.
+That distinction matters: MVC-level CORS only applies to requests that reach a controller through
+the normal dispatch path, so a request Spring Security rejects early (a 401 for a missing/expired
+token, committed directly by the `AuthenticationEntryPoint`) never picked up CORS headers.
+`.cors(...)` registers Spring Security's own `CorsFilter` at the very front of the chain instead,
+so every response — success or rejection — carries `Access-Control-Allow-Origin`. Without this, a
+401 in a real browser doesn't surface as a readable status at all, just an opaque "blocked by CORS
+policy" network failure, which silently broke the frontend's ability to tell "your session expired"
+apart from "the backend is unreachable."
+
 ## Login rate limiting (issue #35)
 
 `LoginRateLimiter` — an in-memory, per-IP fixed-window counter (5 failed attempts per minute,
