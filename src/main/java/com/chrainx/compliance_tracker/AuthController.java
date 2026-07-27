@@ -15,14 +15,16 @@ public class AuthController {
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final LoginRateLimiter loginRateLimiter;
+    private final TokenBlocklist tokenBlocklist;
 
     @Autowired
     public AuthController(UserRepository userRepository, PasswordEncoder passwordEncoder, JwtService jwtService,
-                           LoginRateLimiter loginRateLimiter) {
+                           LoginRateLimiter loginRateLimiter, TokenBlocklist tokenBlocklist) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.loginRateLimiter = loginRateLimiter;
+        this.tokenBlocklist = tokenBlocklist;
     }
 
     @PostMapping("/register")
@@ -73,5 +75,23 @@ public class AuthController {
 
         loginRateLimiter.recordSuccess(clientIp);
         return ResponseEntity.ok(new AuthResponse(jwtService.generateToken(user.getEmail())));
+    }
+
+    // No @RequestBody - unlike register/login, logout needs no credentials, only the token
+    // that's already on every request via the Authorization header (same header
+    // JwtAuthenticationFilter already reads). Sits under /api/auth/** in SecurityConfig's
+    // permitAll() list along with register/login, so a missing/malformed header is handled here
+    // as a plain 400 rather than SecurityConfig rejecting it with a 401 first.
+    @PostMapping("/logout")
+    public ResponseEntity<Void> logout(HttpServletRequest httpRequest) {
+        String authHeader = httpRequest.getHeader("Authorization");
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        String token = authHeader.substring("Bearer ".length());
+        tokenBlocklist.revoke(token);
+
+        return ResponseEntity.ok().build();
     }
 }

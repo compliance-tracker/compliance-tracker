@@ -252,4 +252,38 @@ class AuthIntegrationTest {
         assertEquals(1, statusCodes.stream().filter(s -> s == 200).count());
         assertEquals(1, statusCodes.stream().filter(s -> s == 409).count());
     }
+
+    @Test
+    void loggedOutToken_isRejected_onTheVeryNextRequest() {
+        // Regression test for issue #41: a JWT normally stays valid until it naturally expires,
+        // even after "logout" - this proves the token this test just used to log in genuinely
+        // stops working the moment /api/auth/logout is called for it, not just that the
+        // endpoint returns 200.
+        String email = "auth-e2e-logout-" + System.nanoTime() + "@example.com";
+        String token = restTemplate.postForEntity(
+                        "/api/auth/register", new AuthRequest(email, "a-real-password"), AuthResponse.class)
+                .getBody().token();
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+
+        ResponseEntity<String> beforeLogout = restTemplate.exchange(
+                "/api/businesses", org.springframework.http.HttpMethod.GET, new HttpEntity<>(headers), String.class);
+        assertEquals(HttpStatus.OK, beforeLogout.getStatusCode());
+
+        ResponseEntity<Void> logoutResponse = restTemplate.exchange(
+                "/api/auth/logout", org.springframework.http.HttpMethod.POST, new HttpEntity<>(headers), Void.class);
+        assertEquals(HttpStatus.OK, logoutResponse.getStatusCode());
+
+        ResponseEntity<String> afterLogout = restTemplate.exchange(
+                "/api/businesses", org.springframework.http.HttpMethod.GET, new HttpEntity<>(headers), String.class);
+        assertEquals(HttpStatus.UNAUTHORIZED, afterLogout.getStatusCode());
+    }
+
+    @Test
+    void logout_withNoAuthorizationHeader_returns400() {
+        ResponseEntity<Void> response = restTemplate.postForEntity("/api/auth/logout", null, Void.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    }
 }

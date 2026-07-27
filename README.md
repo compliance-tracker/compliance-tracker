@@ -158,7 +158,10 @@ PostgreSQL (app_user, business, work_pass,     real AWS prod)   (logs only for n
   Requests` (including for the correct password, until the window resets). Registration checks
   for an existing email up front, but also catches the DB's own unique-constraint violation
   around the actual save — two concurrent registrations for the same email resolve to exactly
-  one `200` and one clean `409`, never an unhandled `500` (issue #42).
+  one `200` and one clean `409`, never an unhandled `500` (issue #42). `POST /api/auth/logout`
+  revokes the caller's own token via `TokenBlocklist`, checked by `JwtAuthenticationFilter` on
+  every subsequent request — a JWT normally stays valid until it naturally expires even after
+  "logout," this makes that untrue (issue #41).
 - **`BusinessController`** — every method now scopes to `@AuthenticationPrincipal User`:
   `createBusiness` sets the owner automatically; `getAllBusinesses`/`getDeadlines` only
   ever return the current user's own businesses (`findByOwnerId`/`findByIdAndOwnerId`). A
@@ -335,6 +338,7 @@ previously stopped, even if reusing the same container.
 | GET    | `/hello`                      | No             | Smoke-test endpoint             |
 | POST   | `/api/auth/register`          | No             | Create an account, returns a JWT |
 | POST   | `/api/auth/login`              | No             | Returns a JWT for an existing account — `429` after 5 failed attempts from the same IP within a minute |
+| POST   | `/api/auth/logout`             | No*            | Revokes the caller's token immediately — `400` if no `Bearer` token was sent. *Not gated by `SecurityConfig` like other protected routes, but functionally requires a real token to do anything |
 | POST   | `/api/businesses`             | Yes            | Create a business, owned by the caller |
 | GET    | `/api/businesses`             | Yes            | List the caller's own businesses (not everyone's) |
 | GET    | `/api/businesses/{id}/deadlines` | Yes         | Compute and return that business's deadlines — 404 if it doesn't exist or isn't yours |
