@@ -1,5 +1,6 @@
 package com.chrainx.compliance_tracker;
 
+import com.chrainx.compliance_tracker.rules.RuleEngine;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -55,7 +56,9 @@ class SqsDispatchIntegrationTest {
         Business business = new Business();
         business.setName("Integration Test Co");
         // ACRA rule is financialYearEnd + 7 months, so this makes today the ACRA due date.
-        business.setFinancialYearEnd(LocalDate.now().minusMonths(7));
+        // Uses the app's own "today" (Singapore time, issue #28), not the test runner's default
+        // zone - see ReminderWorkerIntegrationTest for why this must match.
+        business.setFinancialYearEnd(LocalDate.now(RuleEngine.SINGAPORE_TIME_ZONE).minusMonths(7));
         business.setGstRegistered(false);
         business.setOwner(owner);
         businessRepository.save(business);

@@ -1,5 +1,6 @@
 package com.chrainx.compliance_tracker;
 
+import com.chrainx.compliance_tracker.rules.RuleEngine;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -49,7 +50,11 @@ class ReminderWorkerIntegrationTest {
 
         Business business = new Business();
         business.setName("Worker Integration Test Co");
-        business.setFinancialYearEnd(LocalDate.now().minusMonths(7));
+        // Uses the app's own "today" (Singapore time, issue #28), not the test runner's default
+        // zone - the app now computes deadlines relative to RuleEngine.SINGAPORE_TIME_ZONE, so
+        // this must match or the two can disagree about whether today is actually the due date,
+        // particularly for the ~8 hours/day where the UTC calendar date and the SGT one differ.
+        business.setFinancialYearEnd(LocalDate.now(RuleEngine.SINGAPORE_TIME_ZONE).minusMonths(7));
         business.setGstRegistered(false);
         business.setOwner(owner);
         businessRepository.save(business);
