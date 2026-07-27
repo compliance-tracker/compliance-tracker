@@ -27,8 +27,11 @@ class AuthControllerTest {
     // instance per test method (JUnit 5 creates a new test instance for each @Test by default)
     // means no attempt counts leak between tests.
     private final LoginRateLimiter loginRateLimiter = new LoginRateLimiter();
+    // Real TokenBlocklist, same reasoning - fresh instance per test, no revoked tokens leak
+    // between tests.
+    private final TokenBlocklist tokenBlocklist = new TokenBlocklist();
 
-    private final AuthController controller = new AuthController(userRepository, passwordEncoder, jwtService, loginRateLimiter);
+    private final AuthController controller = new AuthController(userRepository, passwordEncoder, jwtService, loginRateLimiter, tokenBlocklist);
 
     private MockHttpServletRequest requestFrom(String ip) {
         MockHttpServletRequest request = new MockHttpServletRequest();
@@ -162,5 +165,37 @@ class AuthControllerTest {
             ResponseEntity<AuthResponse> response = controller.login(new AuthRequest("owner@example.com", "wrong-again"), request);
             assertEquals(401, response.getStatusCode().value());
         }
+    }
+
+    private MockHttpServletRequest requestWithAuthHeader(String headerValue) {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        if (headerValue != null) {
+            request.addHeader("Authorization", headerValue);
+        }
+        return request;
+    }
+
+    @Test
+    void logout_revokesTheToken() {
+        String token = jwtService.generateToken("owner@example.com");
+
+        ResponseEntity<Void> response = controller.logout(requestWithAuthHeader("Bearer " + token));
+
+        assertEquals(200, response.getStatusCode().value());
+        assertTrue(tokenBlocklist.isRevoked(token));
+    }
+
+    @Test
+    void logout_returns400_whenNoAuthorizationHeaderPresent() {
+        ResponseEntity<Void> response = controller.logout(requestWithAuthHeader(null));
+
+        assertEquals(400, response.getStatusCode().value());
+    }
+
+    @Test
+    void logout_returns400_whenHeaderDoesNotStartWithBearer() {
+        ResponseEntity<Void> response = controller.logout(requestWithAuthHeader("Basic somecreds"));
+
+        assertEquals(400, response.getStatusCode().value());
     }
 }

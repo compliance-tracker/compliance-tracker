@@ -13,20 +13,26 @@ import java.io.IOException;
 import java.util.Collections;
 
 // Runs once per request, before the actual controller. Looks for "Authorization: Bearer <token>",
-// and if it's present and valid, tells Spring Security "this request is authenticated as this
-// user" by populating the SecurityContext - which is what @AuthenticationPrincipal in
-// controllers reads from. If the header is missing or the token's invalid, this filter simply
-// does nothing and lets the request continue unauthenticated - SecurityConfig's
-// authorizeHttpRequests rules are what actually reject it with a 401 further down the chain.
+// and if it's present, not revoked, and valid, tells Spring Security "this request is
+// authenticated as this user" by populating the SecurityContext - which is what
+// @AuthenticationPrincipal in controllers reads from. If the header is missing, the token's
+// revoked, or the token's invalid, this filter simply does nothing and lets the request
+// continue unauthenticated - SecurityConfig's authorizeHttpRequests rules are what actually
+// reject it with a 401 further down the chain. Deliberately not special-cased: a revoked token
+// is treated exactly the same passive way an expired/malformed one already was, rather than
+// this filter setting its own response status and short-circuiting the chain itself (which
+// would risk skipping other filters further down, e.g. CORS handling).
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
     private final UserRepository userRepository;
+    private final TokenBlocklist tokenBlocklist;
 
-    public JwtAuthenticationFilter(JwtService jwtService, UserRepository userRepository) {
+    public JwtAuthenticationFilter(JwtService jwtService, UserRepository userRepository, TokenBlocklist tokenBlocklist) {
         this.jwtService = jwtService;
         this.userRepository = userRepository;
+        this.tokenBlocklist = tokenBlocklist;
     }
 
     @Override
@@ -37,13 +43,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             String token = authHeader.substring("Bearer ".length());
-            String email = jwtService.extractEmail(token);
 
-            if (email != null) {
-                userRepository.findByEmail(email).ifPresent(user -> {
-                    var authentication = new UsernamePasswordAuthenticationToken(user, null, Collections.emptyList());
-                    SecurityContextHolder.getContext().setAuthentication(authentication);
-                });
+            if (!tokenBlocklist.isRevoked(token)) {
+                String email = jwtService.extractEmail(token);
+
+                if (email != null) {
+                    userRepository.findByEmail(email).ifPresent(user -> {
+                        var authentication = new UsernamePasswordAuthenticationToken(user, null, Collections.emptyList());
+                        SecurityContextHolder.getContext().setAuthentication(authentication);
+                    });
+                }
             }
         }
 
