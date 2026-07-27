@@ -53,6 +53,25 @@ class AuthIntegrationTest {
     }
 
     @Test
+    void unauthenticatedRequest_stillGetsCorsHeaders_onItsRejection() {
+        // Regression test for issue #83: CORS used to be MVC-level only
+        // (WebMvcConfigurer.addCorsMappings), which never ran on a request Spring Security's own
+        // filter chain rejected early - so a 401 had no Access-Control-Allow-Origin header at
+        // all, invisible to browser JS as anything more specific than an opaque network failure.
+        // A method-level test (mocked, no real filter chain) couldn't catch this - only a real
+        // HTTP call through the actual SecurityConfig chain, exactly like this one, can.
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Origin", "http://localhost:5173");
+        headers.set("Authorization", "Bearer garbage-token");
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/businesses", org.springframework.http.HttpMethod.GET, new HttpEntity<>(headers), String.class);
+
+        assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
+        assertEquals("http://localhost:5173", response.getHeaders().getFirst("Access-Control-Allow-Origin"));
+    }
+
+    @Test
     void registerThenUseToken_canCreateAndListOwnBusiness() {
         String email = "auth-e2e-" + System.nanoTime() + "@example.com";
 

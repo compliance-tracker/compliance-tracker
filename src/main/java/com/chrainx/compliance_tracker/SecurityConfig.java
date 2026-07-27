@@ -3,6 +3,7 @@ package com.chrainx.compliance_tracker;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -27,6 +28,15 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http, JwtAuthenticationFilter jwtAuthenticationFilter) throws Exception {
         http
+                // Registers Spring Security's own CorsFilter, backed by the CorsConfigurationSource
+                // bean in CorsConfig, at the very front of this filter chain - before the entry
+                // point below can reject anything. Needed because CORS used to be MVC-level only
+                // (WebMvcConfigurer), which never ran on a request the security chain rejected
+                // early (e.g. a 401 for an expired token) - so that response had no CORS headers
+                // at all, invisible to browser JS as anything more specific than a generic network
+                // failure. Found live, not hypothetically, while building frontend issue #17
+                // (issue #83).
+                .cors(Customizer.withDefaults())
                 // CSRF protection exists to stop a malicious site from tricking a logged-in
                 // user's browser into submitting requests using their session cookie. It's
                 // irrelevant here: this API is stateless (no cookies at all, see below) and
