@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class AuthControllerTest {
@@ -76,6 +77,38 @@ class AuthControllerTest {
         ResponseEntity<AuthResponse> response = controller.register(new AuthRequest("racing@example.com", "password123"));
 
         assertEquals(409, response.getStatusCode().value());
+    }
+
+    @Test
+    void register_returns400_whenPasswordIsTooShort() {
+        ResponseEntity<AuthResponse> response = controller.register(new AuthRequest("new@example.com", "abc123"));
+
+        assertEquals(400, response.getStatusCode().value());
+    }
+
+    @Test
+    void register_returns400_whenPasswordHasNoDigit() {
+        ResponseEntity<AuthResponse> response = controller.register(new AuthRequest("new@example.com", "allletters"));
+
+        assertEquals(400, response.getStatusCode().value());
+    }
+
+    @Test
+    void register_returns400_whenPasswordHasNoLetter() {
+        ResponseEntity<AuthResponse> response = controller.register(new AuthRequest("new@example.com", "12345678"));
+
+        assertEquals(400, response.getStatusCode().value());
+    }
+
+    @Test
+    void register_checksPasswordStrength_beforeCheckingIfEmailIsTaken() {
+        // A weak password should be rejected as a 400 regardless of whether the email is
+        // available - malformed input takes precedence over a business-logic conflict, and this
+        // also proves the check happens without ever needing to hit the repository at all.
+        ResponseEntity<AuthResponse> response = controller.register(new AuthRequest("taken@example.com", "weak"));
+
+        assertEquals(400, response.getStatusCode().value());
+        verifyNoInteractions(userRepository);
     }
 
     @Test

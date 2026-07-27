@@ -90,6 +90,16 @@ so every response — success or rejection — carries `Access-Control-Allow-Ori
 policy" network failure, which silently broke the frontend's ability to tell "your session expired"
 apart from "the backend is unreachable."
 
+## Password strength on registration (issue #43)
+
+`AuthController.register` rejects a password under 8 characters or missing a letter/digit with a
+plain `400`, before ever checking whether the email is already taken. Deliberately minimal — not
+a full complexity ruleset (no forced special characters or mixed case) — enough to stop trivially
+weak passwords without frustrating real users over rules that don't meaningfully improve security
+here. Checked in `register` only, not `login` — `AuthRequest` is shared between the two endpoints,
+and this must never reject a login attempt for an existing account whose password predates this
+check.
+
 ## Login rate limiting (issue #35)
 
 `LoginRateLimiter` — an in-memory, per-IP fixed-window counter (5 failed attempts per minute,
