@@ -27,10 +27,7 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http, JwtAuthenticationFilter jwtAuthenticationFilter) throws Exception {
         http
-                // CSRF protection exists to stop a malicious site from tricking a logged-in
-                // user's browser into submitting requests using their session cookie. It's
-                // irrelevant here: this API is stateless (no cookies at all, see below) and
-                // authenticated purely via a bearer token the frontend attaches explicitly.
+                .cors(cors -> {})
                 .csrf(csrf -> csrf.disable())
                 // STATELESS: Spring Security must not create or rely on an HttpSession - every
                 // request re-proves who it is via the JWT, nothing is remembered server-side
@@ -50,12 +47,13 @@ public class SecurityConfig {
                         // from the frontend would be rejected before CorsConfig's headers
                         // even get a chance to apply.
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                        .requestMatchers("/hello", "/api/auth/**", "/error").permitAll()
+                        .requestMatchers("/hello", "/api/auth/**", "/error", "/actuator/**").permitAll()
                         .anyRequest().authenticated()
                 )
-                // Runs our JwtAuthenticationFilter before Spring Security's own default
+                // Runs our filters before Spring Security's own default
                 // username/password filter, since we're never using that default form-login
                 // mechanism at all - only the JWT filter.
+                .addFilterBefore(correlationIdFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();

@@ -25,16 +25,19 @@ public class SqsDispatchService {
     private final SqsClient sqsClient;
     private final ObjectMapper objectMapper;
     private final String queueName;
+    private final int defaultLeadDays;
 
     @Autowired
     public SqsDispatchService(DeadlineSyncService deadlineSyncService,
                                SqsClient sqsClient,
                                ObjectMapper objectMapper,
-                               @Value("${aws.sqs.queue-name}") String queueName) {
+                               @Value("${aws.sqs.queue-name}") String queueName,
+                               @Value("${compliance.reminder.lead-days:14}") int defaultLeadDays) {
         this.deadlineSyncService = deadlineSyncService;
         this.sqsClient = sqsClient;
         this.objectMapper = objectMapper;
         this.queueName = queueName;
+        this.defaultLeadDays = defaultLeadDays;
     }
 
     // @Scheduled methods must be no-arg - Spring has no way to supply a parameter on a timer
@@ -47,7 +50,7 @@ public class SqsDispatchService {
     // project's scope; flagged as a known limitation.
     @Scheduled(cron = "0 15 1 * * *")
     public void scheduledDispatch() {
-        dispatchDueSoonDeadlines(14);
+        dispatchDueSoonDeadlines(defaultLeadDays);
     }
 
     public int dispatchDueSoonDeadlines(int daysAhead) {

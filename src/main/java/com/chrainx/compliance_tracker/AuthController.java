@@ -1,6 +1,7 @@
 package com.chrainx.compliance_tracker;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
@@ -28,7 +29,13 @@ public class AuthController {
     }
 
     @PostMapping("/register")
-    public ResponseEntity<AuthResponse> register(@RequestBody AuthRequest request) {
+    public ResponseEntity<AuthResponse> register(@Valid @RequestBody AuthRequest request) {
+        if (request.password() == null || request.password().length() < 8 ||
+            !request.password().matches(".*[A-Z].*") ||
+            !request.password().matches(".*[a-z].*") ||
+            !request.password().matches(".*[0-9].*")) {
+            return ResponseEntity.badRequest().build();
+        }
         if (userRepository.findByEmail(request.email()).isPresent()) {
             return ResponseEntity.status(409).build();
         }
