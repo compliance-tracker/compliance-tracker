@@ -1,7 +1,7 @@
 package com.chrainx.compliance_tracker.rules;
 
-import com.chrainx.compliance_tracker.Business;
-import com.chrainx.compliance_tracker.WorkPass;
+import com.chrainx.compliance_tracker.business.Business;
+import com.chrainx.compliance_tracker.business.WorkPass;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
