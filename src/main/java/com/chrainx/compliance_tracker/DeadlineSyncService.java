@@ -7,6 +7,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 
 // @Service: same idea as @Component (Spring creates and manages one instance, injectable
@@ -42,7 +43,7 @@ public class DeadlineSyncService {
     // automatically with no separate "update" logic needed.
     @Scheduled(cron = "0 0 1 * * *")
     public void syncDeadlines() {
-        LocalDate today = LocalDate.now();
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Singapore"));
 
         for (Business business : businessRepository.findAll()) {
             List<WorkPass> workPasses = workPassRepository.findByBusinessId(business.getId());

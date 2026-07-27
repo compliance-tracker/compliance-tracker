@@ -10,6 +10,7 @@ import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 
 // Pushes due-soon, unreminded deadlines onto SQS. Deliberately does NOT mark reminderSent
@@ -54,7 +55,7 @@ public class SqsDispatchService {
                 GetQueueUrlRequest.builder().queueName(queueName).build()
         ).queueUrl();
 
-        List<DeadlineRecord> dueSoon = deadlineSyncService.findDueSoonAndUnreminded(LocalDate.now(), daysAhead);
+        List<DeadlineRecord> dueSoon = deadlineSyncService.findDueSoonAndUnreminded(LocalDate.now(ZoneId.of("Asia/Singapore")), daysAhead);
 
         for (DeadlineRecord record : dueSoon) {
             // Jackson 3.x (bundled by Spring Boot 4.1) made writeValueAsString throw an

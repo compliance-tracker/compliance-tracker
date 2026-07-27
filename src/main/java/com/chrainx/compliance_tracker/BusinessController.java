@@ -8,6 +8,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 
@@ -70,7 +71,7 @@ public class BusinessController {
         }
 
         List<WorkPass> workPasses = workPassRepository.findByBusinessId(id);
-        List<Deadline> deadlines = ruleEngine.computeDeadlines(business.get(), workPasses, LocalDate.now());
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(business.get(), workPasses, LocalDate.now(ZoneId.of("Asia/Singapore")));
         return ResponseEntity.ok(deadlines);
     }
 
