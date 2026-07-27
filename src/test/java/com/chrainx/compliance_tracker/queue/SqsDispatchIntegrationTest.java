@@ -76,8 +76,15 @@ class SqsDispatchIntegrationTest {
                 GetQueueUrlRequest.builder().queueName(queueName).build()
         ).queueUrl();
 
+        // waitTimeSeconds(5) - long polling, matching ReminderWorkerService's real poll - not
+        // short polling's default of 0. Regression fix for issue #75: SQS's documented
+        // short-polling behavior only samples a subset of servers and doesn't guarantee
+        // returning every currently-available message on one call, so a message dispatched
+        // moments earlier could occasionally come back empty on the very next receive - flaky
+        // in the genuine sense (failed for real, twice in a row, then passed 3/3 immediately
+        // after with zero code changes), not a bug in the dispatch logic being tested.
         ReceiveMessageResponse response = sqsClient.receiveMessage(
-                ReceiveMessageRequest.builder().queueUrl(queueUrl).maxNumberOfMessages(10).build()
+                ReceiveMessageRequest.builder().queueUrl(queueUrl).maxNumberOfMessages(10).waitTimeSeconds(5).build()
         );
 
         assertFalse(response.messages().isEmpty());
