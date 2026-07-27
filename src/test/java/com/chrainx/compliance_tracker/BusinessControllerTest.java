@@ -13,7 +13,10 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 // Plain unit test - no Spring context/DB involved, so it stays fast. The controller is
@@ -135,5 +138,83 @@ class BusinessControllerTest {
         List<Business> result = controller.getAllBusinesses(currentUser);
 
         assertEquals(1, result.size());
+    }
+
+    @Test
+    void updateBusiness_appliesChanges_toTheOwnedBusiness() {
+        Business existing = new Business();
+        existing.setId(1L);
+        existing.setName("Old Name");
+        existing.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
+        existing.setGstRegistered(false);
+
+        Business updates = new Business();
+        updates.setName("New Name");
+        updates.setFinancialYearEnd(LocalDate.of(2027, 6, 30));
+        updates.setGstRegistered(true);
+
+        when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(existing));
+        when(businessRepository.save(existing)).thenReturn(existing);
+
+        ResponseEntity<Business> response = controller.updateBusiness(1L, updates, currentUser);
+
+        assertEquals(200, response.getStatusCode().value());
+        assertEquals("New Name", response.getBody().getName());
+        assertEquals(LocalDate.of(2027, 6, 30), response.getBody().getFinancialYearEnd());
+        assertTrue(response.getBody().isGstRegistered());
+    }
+
+    @Test
+    void updateBusiness_ignoresClientSuppliedIdAndOwner() {
+        // Same IDOR-avoidance shape as issue #66: updateBusiness never saves the client-supplied
+        // `updates` object directly, only copies its mutable fields onto the already-fetched,
+        // already-owned entity - so a client-supplied id/owner on the request body can't do
+        // anything at all, there's no code path that would ever read them.
+        Business existing = new Business();
+        existing.setId(1L);
+        existing.setName("Real Business");
+
+        Business updates = new Business();
+        updates.setId(999L); // attacker-style attempt, should simply be ignored
+        updates.setName("Updated Name");
+
+        when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(existing));
+        when(businessRepository.save(existing)).thenReturn(existing);
+
+        controller.updateBusiness(1L, updates, currentUser);
+
+        assertEquals(1L, existing.getId());
+    }
+
+    @Test
+    void updateBusiness_returns404_whenBusinessDoesNotBelongToCaller() {
+        when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.empty());
+
+        ResponseEntity<Business> response = controller.updateBusiness(1L, new Business(), currentUser);
+
+        assertEquals(404, response.getStatusCode().value());
+    }
+
+    @Test
+    void deleteBusiness_deletes_whenOwnedByCaller() {
+        Business business = new Business();
+        business.setId(1L);
+
+        when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(business));
+
+        ResponseEntity<Void> response = controller.deleteBusiness(1L, currentUser);
+
+        assertEquals(204, response.getStatusCode().value());
+        verify(businessRepository).delete(business);
+    }
+
+    @Test
+    void deleteBusiness_returns404_whenBusinessDoesNotBelongToCaller() {
+        when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.empty());
+
+        ResponseEntity<Void> response = controller.deleteBusiness(1L, currentUser);
+
+        assertEquals(404, response.getStatusCode().value());
+        verify(businessRepository, never()).delete(any());
     }
 }
