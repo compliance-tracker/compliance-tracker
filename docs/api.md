@@ -14,6 +14,8 @@ moved twice.
 | POST   | `/api/auth/logout`             | No*            | Revokes the caller's token immediately — `400` if no `Bearer` token was sent. *Not gated by `SecurityConfig` like other protected routes, but functionally requires a real token to do anything |
 | POST   | `/api/businesses`             | Yes            | Create a business, owned by the caller |
 | GET    | `/api/businesses`             | Yes            | List the caller's own businesses (not everyone's) |
+| PUT    | `/api/businesses/{id}`        | Yes            | Update name/financialYearEnd/gstRegistered — 404 if it doesn't exist or isn't yours |
+| DELETE | `/api/businesses/{id}`        | Yes            | Delete a business — also deletes its work passes and computed deadlines (DB-level cascade). 404 if it doesn't exist or isn't yours |
 | GET    | `/api/businesses/{id}/deadlines` | Yes         | Compute and return that business's deadlines — 404 if it doesn't exist or isn't yours |
 | POST   | `/api/businesses/{id}/work-passes` | Yes      | Create a work pass under that business — 404 if the business doesn't exist or isn't yours |
 | GET    | `/api/businesses/{id}/work-passes` | Yes      | List work passes for that business — 404 if it doesn't exist or isn't yours |

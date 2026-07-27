@@ -73,4 +73,41 @@ public class BusinessController {
         List<Deadline> deadlines = ruleEngine.computeDeadlines(business.get(), workPasses, LocalDate.now());
         return ResponseEntity.ok(deadlines);
     }
+
+    // Deliberately never saves the client-supplied `updates` object directly - only copies its
+    // mutable fields (name/financialYearEnd/gstRegistered) onto the already-owned, already-
+    // persisted entity fetched via findByIdAndOwnerId. Same IDOR-avoidance shape as #66's fix:
+    // id and owner are never touched by anything the client sent, so there's no id/owner field
+    // to even accidentally trust.
+    @PutMapping("/{id}")
+    public ResponseEntity<Business> updateBusiness(@PathVariable Long id, @RequestBody Business updates,
+                                                    @AuthenticationPrincipal User currentUser) {
+        Optional<Business> existing = businessRepository.findByIdAndOwnerId(id, currentUser.getId());
+
+        if (existing.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        Business business = existing.get();
+        business.setName(updates.getName());
+        business.setFinancialYearEnd(updates.getFinancialYearEnd());
+        business.setGstRegistered(updates.isGstRegistered());
+
+        return ResponseEntity.ok(businessRepository.save(business));
+    }
+
+    // Deleting a business also removes its work passes and deadline records - enforced via
+    // ON DELETE CASCADE at the DB level (see V3 migration), not by this method issuing separate
+    // deletes, so it stays correct regardless of how a business row is ever removed.
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteBusiness(@PathVariable Long id, @AuthenticationPrincipal User currentUser) {
+        Optional<Business> business = businessRepository.findByIdAndOwnerId(id, currentUser.getId());
+
+        if (business.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        businessRepository.delete(business.get());
+        return ResponseEntity.noContent().build();
+    }
 }

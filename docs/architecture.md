@@ -51,8 +51,13 @@ handling) live in [security.md](security.md), not here. Notification channel set
 ## Web layer
 
 - **`BusinessController`** — exposes `POST /api/businesses` (create), `GET /api/businesses`
-  (list), and `GET /api/businesses/{id}/deadlines` (compute and return that business's current
-  deadlines via `RuleEngine`, including any work-pass renewals) over HTTP.
+  (list), `PUT /api/businesses/{id}` (update), `DELETE /api/businesses/{id}` (delete, cascades
+  to work passes and deadline records via `V3__cascade_delete_business_dependents.sql`, not
+  application code — see "Database migrations" below), and `GET /api/businesses/{id}/deadlines`
+  (compute and return that business's current deadlines via `RuleEngine`, including any
+  work-pass renewals) over HTTP. `updateBusiness` never saves the client-supplied request body
+  directly — only copies its mutable fields onto the already-fetched, already-owned entity, the
+  same IDOR-avoidance shape as issue #66's fix on `createBusiness`.
 - **`WorkPassController`** — exposes `POST`/`GET`/`DELETE` on `/api/businesses/{id}/work-passes`,
   nested under the owning business — every operation first checks the business belongs to the
   caller (same `findByIdAndOwnerId` scoping as `BusinessController`) before touching any work
@@ -164,6 +169,16 @@ before real deployment (issue #7).
 **Note:** Spring Boot 4 split per-technology autoconfiguration into separate starters — plain
 `flyway-core` on the classpath is no longer enough to trigger Flyway's autoconfiguration; it
 needs the dedicated `spring-boot-starter-flyway` module (see `pom.xml`).
+
+**`V3__cascade_delete_business_dependents.sql`** (issue #25): `V1`'s original `work_pass`/
+`deadline_record` foreign keys were plain `REFERENCES business(id)`, no `ON DELETE` behavior
+specified — Postgres's default is to reject the delete outright (a foreign key violation) if any
+dependent rows still exist. Once `DELETE /api/businesses/{id}` existed, deleting a business with
+any work pass or synced deadline record would have failed with an unhandled exception. This
+migration drops and recreates both FKs with `ON DELETE CASCADE`, so removing a business also
+removes its work passes and deadline records automatically at the DB level — correct regardless
+of how a business row is ever deleted (this endpoint, a future admin tool, direct `psql`), not
+dependent on the application remembering to issue the right deletes in the right order first.
 
 ## Planned (not built yet — see [open issues](https://github.com/compliance-tracker/compliance-tracker/issues))
 
