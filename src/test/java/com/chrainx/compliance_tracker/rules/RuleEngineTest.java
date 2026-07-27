@@ -5,6 +5,7 @@ import com.chrainx.compliance_tracker.WorkPass;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.Collections;
 import java.util.List;
 
@@ -15,6 +16,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class RuleEngineTest {
 
     private final RuleEngine ruleEngine = new RuleEngine();
+
+    @Test
+    void singaporeTimeZone_isTheRealAsiaSingaporeZone_atUtcPlusEight() {
+        // Regression test for issue #28: guards the one constant every LocalDate.now(...) call
+        // site in the app (BusinessController, DeadlineSyncService, SqsDispatchService) relies
+        // on for "what is today" - a typo'd zone ID here would silently reintroduce the exact
+        // server-default-timezone bug this constant exists to prevent, with nothing else in the
+        // app able to catch it (it's just a String until resolved).
+        assertEquals("Asia/Singapore", RuleEngine.SINGAPORE_TIME_ZONE.getId());
+        assertEquals(ZoneOffset.ofHours(8), RuleEngine.SINGAPORE_TIME_ZONE.getRules().getOffset(java.time.Instant.now()));
+    }
 
     @Test
     void computesAcraDeadline_sevenMonthsAfterFinancialYearEnd() {

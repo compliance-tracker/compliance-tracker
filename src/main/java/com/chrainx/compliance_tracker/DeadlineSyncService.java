@@ -32,7 +32,11 @@ public class DeadlineSyncService {
     }
 
     // @Scheduled(cron = ...): Spring calls this method automatically on the given schedule -
-    // "second minute hour day-of-month month day-of-week". Below runs daily at 01:00.
+    // "second minute hour day-of-month month day-of-week". Below runs daily at 01:00
+    // Singapore time specifically (zone = ...) - without it, Spring's default is the server's
+    // own timezone, so a deployment outside SGT would run this job at the wrong Singapore-local
+    // hour (issue #28: this is a Singapore-specific product, "today" must always mean Singapore's
+    // today, for the job's trigger time as much as for the date math inside it).
     // Requires @EnableScheduling on the main application class, otherwise @Scheduled is a
     // no-op and this would silently never run.
     //
@@ -40,9 +44,9 @@ public class DeadlineSyncService {
     // computing once at business-creation time), so results always reflect the business's
     // current data - e.g. if financialYearEnd is edited later, the next sync picks it up
     // automatically with no separate "update" logic needed.
-    @Scheduled(cron = "0 0 1 * * *")
+    @Scheduled(cron = "0 0 1 * * *", zone = "Asia/Singapore")
     public void syncDeadlines() {
-        LocalDate today = LocalDate.now();
+        LocalDate today = LocalDate.now(RuleEngine.SINGAPORE_TIME_ZONE);
 
         for (Business business : businessRepository.findAll()) {
             List<WorkPass> workPasses = workPassRepository.findByBusinessId(business.getId());

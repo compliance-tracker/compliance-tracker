@@ -6,6 +6,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
 import java.time.YearMonth;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -18,6 +19,16 @@ import java.util.List;
 // and fully deterministic to unit-test.
 @Component
 public class RuleEngine {
+
+    // Every deadline this app computes only ever means anything relative to Singapore's own
+    // calendar - a business's FYE, GST quarter, and work pass expiry are all Singapore-local
+    // concepts (issue #28). Every LocalDate.now(...) call anywhere in the app must use this,
+    // not the JVM's default zone - otherwise a deployment on a server outside SGT (e.g. AWS's
+    // us-east-1, running UTC) would silently roll deadlines over a day early or late right
+    // around midnight SGT, exactly when it matters most. Defined once here, the domain-logic
+    // home for "what is `today` for compliance purposes", rather than repeated as a literal
+    // ZoneId.of("Asia/Singapore") at each call site where a typo could silently drift.
+    public static final ZoneId SINGAPORE_TIME_ZONE = ZoneId.of("Asia/Singapore");
 
     public List<Deadline> computeDeadlines(Business business, List<WorkPass> workPasses, LocalDate referenceDate) {
         List<Deadline> deadlines = new ArrayList<>();
