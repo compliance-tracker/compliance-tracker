@@ -68,36 +68,6 @@ only — see [docs/security.md](docs/security.md) before deploying this anywhere
 This is a reminder/tracking tool, not compliance advice — always verify against the official
 source before relying on a date (see disclaimer above).
 
-## API
-
-| Method | Path                          | Auth required | Description                    |
-|--------|-------------------------------|----------------|---------------------------------|
-| GET    | `/hello`                      | No             | Smoke-test endpoint             |
-| POST   | `/api/auth/register`          | No             | Create an account, returns a JWT |
-| POST   | `/api/auth/login`              | No             | Returns a JWT for an existing account — `429` after 5 failed attempts from the same IP within a minute |
-| POST   | `/api/auth/logout`             | No*            | Revokes the caller's token immediately — `400` if no `Bearer` token was sent. *Not gated by `SecurityConfig` like other protected routes, but functionally requires a real token to do anything |
-| POST   | `/api/businesses`             | Yes            | Create a business, owned by the caller |
-| GET    | `/api/businesses`             | Yes            | List the caller's own businesses (not everyone's) |
-| GET    | `/api/businesses/{id}/deadlines` | Yes         | Compute and return that business's deadlines — 404 if it doesn't exist or isn't yours |
-| POST   | `/api/businesses/{id}/work-passes` | Yes      | Create a work pass under that business — 404 if the business doesn't exist or isn't yours |
-| GET    | `/api/businesses/{id}/work-passes` | Yes      | List work passes for that business — 404 if it doesn't exist or isn't yours |
-| DELETE | `/api/businesses/{id}/work-passes/{workPassId}` | Yes | Remove a work pass — 404 if either the business or the pass doesn't exist/belong to the caller |
-
-Example (register, then use the returned token for everything else):
-
-```bash
-TOKEN=$(curl -s -X POST http://localhost:8081/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"email": "you@example.com", "password": "a-real-password"}' | jq -r .token)
-
-curl -X POST http://localhost:8081/api/businesses \
-  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
-  -d '{"name": "Test Cafe Pte Ltd", "financialYearEnd": "2026-12-31", "gstRegistered": true}'
-
-curl http://localhost:8081/api/businesses/1/deadlines -H "Authorization: Bearer $TOKEN"
-# [{"obligationType":"ACRA_ANNUAL_RETURN","dueDate":"2027-07-31"},{"obligationType":"GST_F5","dueDate":"2026-10-30"}]
-```
-
 ## Testing
 
 ```bash
@@ -114,6 +84,7 @@ dependency.
 
 ## More docs
 
+- [docs/api.md](docs/api.md) — full endpoint reference and a curl walkthrough.
 - [docs/architecture.md](docs/architecture.md) — how the pieces fit together: domain layer, web
   layer, the sync → dispatch → worker reminder pipeline, dead-letter handling, Flyway migrations,
   what's planned but not built yet.
