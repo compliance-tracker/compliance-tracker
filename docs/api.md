@@ -16,12 +16,12 @@ Better here than moved twice.
 | POST   | `/api/auth/reset-password`     | No             | Consumes a token from `forgot-password` and sets a new password — `401` if the token is missing/already used/expired, `400` if the new password is too weak (same rule as registration) |
 | POST   | `/api/auth/verify-email`       | No             | Consumes the token emailed on registration, marks the account verified — `401` if the token is missing/already used/expired (valid for 7 days) |
 | POST   | `/api/businesses`             | Yes            | Create a business, owned by the caller — `400` if `name` is blank or `financialYearEnd` is missing. Accepts an optional `Idempotency-Key` header (any client-generated string, typically a UUID); resending the same key returns the original business instead of creating a duplicate |
-| GET    | `/api/businesses`             | Yes            | List the caller's own businesses (not everyone's) |
+| GET    | `/api/businesses`             | Yes            | List the caller's own businesses, paginated (issue #49) — see "Pagination" below |
 | PUT    | `/api/businesses/{id}`        | Yes            | Update name/financialYearEnd/gstRegistered — same `400` validation as create, `404` if it doesn't exist or isn't yours |
 | DELETE | `/api/businesses/{id}`        | Yes            | Delete a business — also deletes its work passes and computed deadlines (DB-level cascade). 404 if it doesn't exist or isn't yours |
 | GET    | `/api/businesses/{id}/deadlines` | Yes         | Compute and return that business's deadlines — 404 if it doesn't exist or isn't yours |
 | POST   | `/api/businesses/{id}/work-passes` | Yes      | Create a work pass under that business — `400` if `employeeName` is blank or `expiryDate` is missing, `404` if the business doesn't exist or isn't yours |
-| GET    | `/api/businesses/{id}/work-passes` | Yes      | List work passes for that business — 404 if it doesn't exist or isn't yours |
+| GET    | `/api/businesses/{id}/work-passes` | Yes      | List work passes for that business, paginated (issue #49) — 404 if it doesn't exist or isn't yours |
 | DELETE | `/api/businesses/{id}/work-passes/{workPassId}` | Yes | Remove a work pass — 404 if either the business or the pass doesn't exist/belong to the caller |
 
 ## Errors
@@ -36,6 +36,22 @@ Every error response across the API (issue #47) has the same JSON shape:
 instead of string-matching a status code or a human-readable message. Codes in use: `BAD_REQUEST`,
 `UNAUTHORIZED`, `CONFLICT`, `TOO_MANY_REQUESTS`, `NOT_FOUND`. `message` is for humans/logging only,
 never for a client to parse.
+
+## Pagination (issue #49)
+
+`GET /api/businesses` and `GET /api/businesses/{id}/work-passes` both accept `?page=` (0-indexed,
+default `0`) and `?size=` (default `20`, capped at `100` — an oversized request is silently
+clamped, not rejected) query params, and return the same envelope shape instead of a bare array:
+
+```json
+{
+  "content": [ /* the actual page of results */ ],
+  "page": 0,
+  "size": 20,
+  "totalElements": 5,
+  "totalPages": 1
+}
+```
 
 ## Idempotency (issue #61)
 

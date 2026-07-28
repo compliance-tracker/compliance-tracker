@@ -15,6 +15,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.time.LocalDate;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -53,6 +54,15 @@ class WorkPassIntegrationTest {
                 .getBody().id();
     }
 
+    // GET .../work-passes returns a PageResponse<WorkPassResponse>, not a bare array (issue
+    // #49) - ParameterizedTypeReference needed to deserialize the generic type correctly.
+    private List<WorkPassResponse> listWorkPasses(Long businessId, HttpHeaders headers) {
+        ResponseEntity<PageResponse<WorkPassResponse>> response = restTemplate.exchange(
+                "/api/businesses/" + businessId + "/work-passes", HttpMethod.GET, new HttpEntity<>(headers),
+                new org.springframework.core.ParameterizedTypeReference<PageResponse<WorkPassResponse>>() {});
+        return response.getBody().content();
+    }
+
     @Test
     void createThenListWorkPass_forOwnBusiness_succeeds() {
         HttpHeaders headers = authHeaders(registerAndGetToken());
@@ -65,12 +75,7 @@ class WorkPassIntegrationTest {
         assertEquals(HttpStatus.OK, createResponse.getStatusCode());
         assertEquals("Jane Doe", createResponse.getBody().employeeName());
 
-        ResponseEntity<WorkPassResponse[]> listResponse = restTemplate.exchange(
-                "/api/businesses/" + businessId + "/work-passes", HttpMethod.GET,
-                new HttpEntity<>(headers), WorkPassResponse[].class);
-
-        assertEquals(HttpStatus.OK, listResponse.getStatusCode());
-        assertTrue(java.util.Arrays.stream(listResponse.getBody())
+        assertTrue(listWorkPasses(businessId, headers).stream()
                 .anyMatch(p -> p.employeeName().equals("Jane Doe")));
     }
 
@@ -105,11 +110,7 @@ class WorkPassIntegrationTest {
                 new HttpEntity<>(headers), Void.class);
         assertEquals(HttpStatus.NO_CONTENT, deleteResponse.getStatusCode());
 
-        ResponseEntity<WorkPassResponse[]> listResponse = restTemplate.exchange(
-                "/api/businesses/" + businessId + "/work-passes", HttpMethod.GET,
-                new HttpEntity<>(headers), WorkPassResponse[].class);
-
-        assertTrue(java.util.Arrays.stream(listResponse.getBody())
+        assertTrue(listWorkPasses(businessId, headers).stream()
                 .noneMatch(p -> p.id().equals(passId)));
     }
 

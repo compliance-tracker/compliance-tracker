@@ -38,7 +38,7 @@ a single directory before this split (issue #90):
 | Package | Contents |
 |---|---|
 | `auth` | `AuthController`/`AuthRequest`/`AuthResponse`, `JwtService`, `JwtAuthenticationFilter`, `LoginRateLimiter`, `TokenBlocklist`, `User`, `UserRepository`, `PasswordResetToken`/`PasswordResetTokenRepository`, `ForgotPasswordRequest`/`ResetPasswordRequest`, `EmailVerificationToken`/`EmailVerificationTokenRepository`, `VerifyEmailRequest` |
-| `business` | `Business`/`BusinessRequest`/`BusinessResponse`/`BusinessController`/`BusinessRepository`, `WorkPass`/`WorkPassRequest`/`WorkPassResponse`/`WorkPassController`/`WorkPassRepository`, `DeadlineRecord`/`DeadlineRecordRepository`, `DeadlineSyncService`, `IdempotencyKey`/`IdempotencyKeyRepository` |
+| `business` | `Business`/`BusinessRequest`/`BusinessResponse`/`BusinessController`/`BusinessRepository`, `WorkPass`/`WorkPassRequest`/`WorkPassResponse`/`WorkPassController`/`WorkPassRepository`, `DeadlineRecord`/`DeadlineRecordRepository`, `DeadlineSyncService`, `IdempotencyKey`/`IdempotencyKeyRepository`, `PageResponse` (pagination, issue #49) |
 | `config` | `SecurityConfig`, `CorsConfig`, `SchedulingConfig`, `SqsConfig` — cross-cutting `@Configuration` classes, not owned by any one feature |
 | `error` | `ApiError`, `GlobalExceptionHandler` — the consistent structured error response format (issue #47), also cross-cutting |
 | `notifications` | `NotificationSender` interface (reminders), `EmailNotificationSender`, `LoggingNotificationSender`; `AuthEmailSender` interface (password reset #37, email verification #36), `EmailAuthEmailSender`, `LoggingAuthEmailSender` |
@@ -79,14 +79,22 @@ Gradle convention, and it kept import parity easy to check while doing the split
 ## Web layer
 
 - **`BusinessController`** — exposes `POST /api/businesses` (create), `GET /api/businesses`
-  (list), `PUT /api/businesses/{id}` (update), `DELETE /api/businesses/{id}` (delete, cascades
-  to work passes and deadline records via `V3__cascade_delete_business_dependents.sql`, not
-  application code — see "Database migrations" below), and `GET /api/businesses/{id}/deadlines`
-  (compute and return that business's current deadlines via `RuleEngine`, including any
-  work-pass renewals) over HTTP. `updateBusiness` never saves the client-supplied request DTO
-  directly — only copies its fields onto the already-fetched, already-owned entity.
-  `createBusiness` also accepts an optional `Idempotency-Key` header (issue #61) — see
-  `IdempotencyKey` below.
+  (list, paginated — see `PageResponse` below), `PUT /api/businesses/{id}` (update),
+  `DELETE /api/businesses/{id}` (delete, cascades to work passes and deadline records via
+  `V3__cascade_delete_business_dependents.sql`, not application code — see "Database migrations"
+  below), and `GET /api/businesses/{id}/deadlines` (compute and return that business's current
+  deadlines via `RuleEngine`, including any work-pass renewals) over HTTP. `updateBusiness` never
+  saves the client-supplied request DTO directly — only copies its fields onto the already-fetched,
+  already-owned entity. `createBusiness` also accepts an optional `Idempotency-Key` header
+  (issue #61) — see `IdempotencyKey` below.
+- **`PageResponse<T>`** — a small custom pagination envelope (issue #49; `content`, `page`,
+  `size`, `totalElements`, `totalPages`), used by `GET /api/businesses` and
+  `GET /api/businesses/{id}/work-passes`. Deliberately not Spring Data's own `Page<T>` serialized
+  directly — its default JSON shape leaks Spring-internal fields (`pageable`, `sort`, etc.) that
+  aren't part of this API's actual contract, the same reasoning behind `BusinessResponse`/
+  `WorkPassResponse` existing at all (issue #46). `PageResponse.pageable(page, size)` centralizes
+  clamping (page floored at `0`, size clamped to `1`–`100`) so both controllers share the exact
+  same rules.
 - **`IdempotencyKey`** / **`IdempotencyKeyRepository`** — records which business a given
   `(idempotencyKey, ownerId)` pair already created, so a retried `POST /api/businesses` (a client
   resending after a timeout, not knowing whether the first attempt actually succeeded) returns

@@ -107,13 +107,16 @@ class AuthIntegrationTest {
                 com.chrainx.compliance_tracker.business.BusinessResponse.class);
         assertEquals(HttpStatus.OK, createResponse.getStatusCode());
 
-        ResponseEntity<com.chrainx.compliance_tracker.business.BusinessResponse[]> listResponse = restTemplate.exchange(
-                "/api/businesses", org.springframework.http.HttpMethod.GET, new HttpEntity<>(headers),
-                com.chrainx.compliance_tracker.business.BusinessResponse[].class);
+        // GET /api/businesses returns a PageResponse<BusinessResponse>, not a bare array (issue
+        // #49) - ParameterizedTypeReference needed to deserialize the generic type correctly.
+        ResponseEntity<com.chrainx.compliance_tracker.business.PageResponse<com.chrainx.compliance_tracker.business.BusinessResponse>> listResponse =
+                restTemplate.exchange("/api/businesses", org.springframework.http.HttpMethod.GET, new HttpEntity<>(headers),
+                        new org.springframework.core.ParameterizedTypeReference<
+                                com.chrainx.compliance_tracker.business.PageResponse<com.chrainx.compliance_tracker.business.BusinessResponse>>() {});
 
         assertEquals(HttpStatus.OK, listResponse.getStatusCode());
-        assertTrue(listResponse.getBody().length >= 1);
-        assertTrue(java.util.Arrays.stream(listResponse.getBody())
+        assertTrue(listResponse.getBody().content().size() >= 1);
+        assertTrue(listResponse.getBody().content().stream()
                 .anyMatch(b -> b.name().equals("E2E Auth Test Co")));
     }
 
@@ -167,11 +170,12 @@ class AuthIntegrationTest {
         assertTrue(!attackResponse.getBody().id().equals(businessAId),
                 "attacker's business must get a fresh id, not overwrite A's");
 
-        ResponseEntity<com.chrainx.compliance_tracker.business.BusinessResponse[]> listAResponse = restTemplate.exchange(
-                "/api/businesses", org.springframework.http.HttpMethod.GET, new HttpEntity<>(headersA),
-                com.chrainx.compliance_tracker.business.BusinessResponse[].class);
+        ResponseEntity<com.chrainx.compliance_tracker.business.PageResponse<com.chrainx.compliance_tracker.business.BusinessResponse>> listAResponse =
+                restTemplate.exchange("/api/businesses", org.springframework.http.HttpMethod.GET, new HttpEntity<>(headersA),
+                        new org.springframework.core.ParameterizedTypeReference<
+                                com.chrainx.compliance_tracker.business.PageResponse<com.chrainx.compliance_tracker.business.BusinessResponse>>() {});
 
-        assertTrue(java.util.Arrays.stream(listAResponse.getBody())
+        assertTrue(listAResponse.getBody().content().stream()
                 .anyMatch(b -> b.id().equals(businessAId) && b.name().equals("User A's Real Business")),
                 "User A's original business must still exist, unmodified, still owned by A");
     }
