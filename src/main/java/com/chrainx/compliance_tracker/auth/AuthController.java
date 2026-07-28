@@ -1,5 +1,6 @@
 package com.chrainx.compliance_tracker.auth;
 
+import com.chrainx.compliance_tracker.error.ApiError;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -28,13 +29,14 @@ public class AuthController {
     }
 
     @PostMapping("/register")
-    public ResponseEntity<AuthResponse> register(@RequestBody AuthRequest request) {
+    public ResponseEntity<?> register(@RequestBody AuthRequest request) {
         if (isTooWeak(request.password())) {
-            return ResponseEntity.status(400).build();
+            return ResponseEntity.status(400).body(new ApiError("BAD_REQUEST",
+                    "Password must be at least 8 characters and include a letter and a digit."));
         }
 
         if (userRepository.findByEmail(request.email()).isPresent()) {
-            return ResponseEntity.status(409).build();
+            return ResponseEntity.status(409).body(new ApiError("CONFLICT", "An account with this email already exists."));
         }
 
         User user = new User();
@@ -52,7 +54,7 @@ public class AuthController {
             // rejects the second insert. Without this catch, that surfaces as an unhandled
             // exception (a 500) instead of the same clean 409 the sequential-request case
             // already returns above.
-            return ResponseEntity.status(409).build();
+            return ResponseEntity.status(409).body(new ApiError("CONFLICT", "An account with this email already exists."));
         }
 
         return ResponseEntity.ok(new AuthResponse(
@@ -60,13 +62,14 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<AuthResponse> login(@RequestBody AuthRequest request, HttpServletRequest httpRequest) {
+    public ResponseEntity<?> login(@RequestBody AuthRequest request, HttpServletRequest httpRequest) {
         String clientIp = httpRequest.getRemoteAddr();
 
         // Checked before touching the DB at all - once an IP has hit the limit, every further
         // attempt short-circuits here regardless of whether the credentials would've been right.
         if (loginRateLimiter.isBlocked(clientIp)) {
-            return ResponseEntity.status(429).build();
+            return ResponseEntity.status(429).body(new ApiError("TOO_MANY_REQUESTS",
+                    "Too many failed login attempts. Try again in a minute."));
         }
 
         var user = userRepository.findByEmail(request.email()).orElse(null);
@@ -75,7 +78,7 @@ public class AuthController {
             // Deliberately the same error for "no such user" and "wrong password" - revealing
             // which one it was would let an attacker enumerate which emails have accounts.
             loginRateLimiter.recordFailure(clientIp);
-            return ResponseEntity.status(401).build();
+            return ResponseEntity.status(401).body(new ApiError("UNAUTHORIZED", "Incorrect email or password."));
         }
 
         loginRateLimiter.recordSuccess(clientIp);
@@ -89,26 +92,26 @@ public class AuthController {
     // on every successful call, so a leaked refresh token can be ridden at most once before
     // reuse fails outright, rather than remaining valid indefinitely until its own expiry.
     @PostMapping("/refresh")
-    public ResponseEntity<AuthResponse> refresh(HttpServletRequest httpRequest) {
+    public ResponseEntity<?> refresh(HttpServletRequest httpRequest) {
         String refreshToken = extractBearerToken(httpRequest);
         if (refreshToken == null) {
-            return ResponseEntity.badRequest().build();
+            return ResponseEntity.badRequest().body(new ApiError("BAD_REQUEST", "Missing or malformed Authorization header."));
         }
 
         if (tokenBlocklist.isRevoked(refreshToken) || !jwtService.isRefreshToken(refreshToken)) {
-            return ResponseEntity.status(401).build();
+            return ResponseEntity.status(401).body(new ApiError("UNAUTHORIZED", "Invalid or expired refresh token."));
         }
 
         String email = jwtService.extractEmail(refreshToken);
         if (email == null) {
-            return ResponseEntity.status(401).build();
+            return ResponseEntity.status(401).body(new ApiError("UNAUTHORIZED", "Invalid or expired refresh token."));
         }
 
         var user = userRepository.findByEmail(email).orElse(null);
         if (user == null) {
             // The account this refresh token was issued for no longer exists - nothing to
             // refresh into.
-            return ResponseEntity.status(401).build();
+            return ResponseEntity.status(401).body(new ApiError("UNAUTHORIZED", "Invalid or expired refresh token."));
         }
 
         tokenBlocklist.revoke(refreshToken);
@@ -123,10 +126,10 @@ public class AuthController {
     // permitAll() list along with register/login, so a missing/malformed header is handled here
     // as a plain 400 rather than SecurityConfig rejecting it with a 401 first.
     @PostMapping("/logout")
-    public ResponseEntity<Void> logout(HttpServletRequest httpRequest) {
+    public ResponseEntity<?> logout(HttpServletRequest httpRequest) {
         String token = extractBearerToken(httpRequest);
         if (token == null) {
-            return ResponseEntity.badRequest().build();
+            return ResponseEntity.badRequest().body(new ApiError("BAD_REQUEST", "Missing or malformed Authorization header."));
         }
 
         tokenBlocklist.revoke(token);

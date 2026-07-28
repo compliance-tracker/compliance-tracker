@@ -229,6 +229,24 @@ class AuthIntegrationTest {
     }
 
     @Test
+    void login_withWrongPassword_returnsAConsistentStructuredErrorBody() {
+        // Regression test for issue #47: proves the actual JSON shape a real client receives,
+        // not just the status code - a unit test calling the controller method directly never
+        // serializes through Jackson, so it can't catch a body shape that doesn't match what
+        // ResponseEntity<?> + ApiError was supposed to produce.
+        String email = "auth-e2e-error-shape-" + System.nanoTime() + "@example.com";
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "correct-password1"), AuthResponse.class);
+
+        ResponseEntity<com.chrainx.compliance_tracker.error.ApiError> loginResponse = restTemplate.postForEntity(
+                "/api/auth/login", new AuthRequest(email, "wrong-password"),
+                com.chrainx.compliance_tracker.error.ApiError.class);
+
+        assertEquals(HttpStatus.UNAUTHORIZED, loginResponse.getStatusCode());
+        assertEquals("UNAUTHORIZED", loginResponse.getBody().error());
+        assertEquals("Incorrect email or password.", loginResponse.getBody().message());
+    }
+
+    @Test
     void concurrentRegistrations_forTheSameEmail_resolveToExactlyOneSuccess() throws Exception {
         // Regression test for issue #42: two real threads firing the same registration request
         // at genuinely the same instant, against real Postgres - not simulated via mocks. A

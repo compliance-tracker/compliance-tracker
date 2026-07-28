@@ -182,6 +182,26 @@ class BusinessIntegrationTest {
     }
 
     @Test
+    void createBusiness_withBlankName_returnsAConsistentStructuredErrorBody() {
+        // Regression test for issue #47: a failed @Valid check is thrown as
+        // MethodArgumentNotValidException during Spring MVC's own argument binding, handled by
+        // GlobalExceptionHandler, not by BusinessController itself - this proves that global
+        // handler produces the same ApiError shape as every controller's own deliberate error
+        // responses, not Spring Boot's default (much more verbose) validation error body.
+        HttpHeaders headers = authHeaders(registerAndGetToken());
+        Business business = new Business();
+        business.setName("");
+        business.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
+
+        ResponseEntity<com.chrainx.compliance_tracker.error.ApiError> response = restTemplate.postForEntity(
+                "/api/businesses", new HttpEntity<>(business, headers), com.chrainx.compliance_tracker.error.ApiError.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertEquals("BAD_REQUEST", response.getBody().error());
+        assertTrue(response.getBody().message().contains("name"));
+    }
+
+    @Test
     void createBusiness_withNullFinancialYearEnd_isRejectedWith400() {
         HttpHeaders headers = authHeaders(registerAndGetToken());
         Business business = new Business();

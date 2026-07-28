@@ -1,6 +1,7 @@
 package com.chrainx.compliance_tracker.business;
 import com.chrainx.compliance_tracker.auth.User;
 
+import com.chrainx.compliance_tracker.error.ApiError;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -28,11 +29,11 @@ public class WorkPassController {
     }
 
     @PostMapping
-    public ResponseEntity<WorkPass> createWorkPass(@PathVariable Long businessId, @Valid @RequestBody WorkPass workPass,
-                                                    @AuthenticationPrincipal User currentUser) {
+    public ResponseEntity<?> createWorkPass(@PathVariable Long businessId, @Valid @RequestBody WorkPass workPass,
+                                             @AuthenticationPrincipal User currentUser) {
         Optional<Business> business = businessRepository.findByIdAndOwnerId(businessId, currentUser.getId());
         if (business.isEmpty()) {
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.status(404).body(new ApiError("NOT_FOUND", "Business not found."));
         }
 
         // Same defensive clearing as issue #66's fix on Business - without this, a client
@@ -44,26 +45,26 @@ public class WorkPassController {
     }
 
     @GetMapping
-    public ResponseEntity<List<WorkPass>> getWorkPasses(@PathVariable Long businessId, @AuthenticationPrincipal User currentUser) {
+    public ResponseEntity<?> getWorkPasses(@PathVariable Long businessId, @AuthenticationPrincipal User currentUser) {
         Optional<Business> business = businessRepository.findByIdAndOwnerId(businessId, currentUser.getId());
         if (business.isEmpty()) {
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.status(404).body(new ApiError("NOT_FOUND", "Business not found."));
         }
 
         return ResponseEntity.ok(workPassRepository.findByBusinessId(businessId));
     }
 
     @DeleteMapping("/{workPassId}")
-    public ResponseEntity<Void> deleteWorkPass(@PathVariable Long businessId, @PathVariable Long workPassId,
-                                                @AuthenticationPrincipal User currentUser) {
+    public ResponseEntity<?> deleteWorkPass(@PathVariable Long businessId, @PathVariable Long workPassId,
+                                             @AuthenticationPrincipal User currentUser) {
         Optional<Business> business = businessRepository.findByIdAndOwnerId(businessId, currentUser.getId());
         if (business.isEmpty()) {
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.status(404).body(new ApiError("NOT_FOUND", "Business not found."));
         }
 
         Optional<WorkPass> workPass = workPassRepository.findByIdAndBusinessId(workPassId, businessId);
         if (workPass.isEmpty()) {
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.status(404).body(new ApiError("NOT_FOUND", "Work pass not found."));
         }
 
         workPassRepository.delete(workPass.get());
