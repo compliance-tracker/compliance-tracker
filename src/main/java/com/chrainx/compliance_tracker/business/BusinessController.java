@@ -39,21 +39,24 @@ public class BusinessController {
     // @AuthenticationPrincipal: injects whatever JwtAuthenticationFilter put into the
     // SecurityContext as the authenticated principal - which we set to the actual User entity,
     // so this parameter just is the logged-in user, no extra lookup needed here.
+    //
+    // Binds a BusinessRequest, not the Business entity itself (issue #46) - there's no id/owner
+    // field on the request DTO at all, so the #66 IDOR shape (a client supplying their own id,
+    // JPA's save() silently doing an UPDATE instead of an INSERT) is structurally impossible
+    // here, not just defended against by remembering to clear a field.
     @PostMapping
-    public Business createBusiness(@Valid @RequestBody Business business, @AuthenticationPrincipal User currentUser) {
-        // business is bound straight from the request body, so a caller can supply an "id"
-        // field of their own choosing. JPA's save() does an UPDATE (not an INSERT) whenever
-        // the entity's id is non-null and already exists in the table - so without this,
-        // any authenticated user could overwrite (and take ownership of) another user's
-        // existing business just by guessing/incrementing its id. Force a fresh insert.
-        business.setId(null);
+    public BusinessResponse createBusiness(@Valid @RequestBody BusinessRequest request, @AuthenticationPrincipal User currentUser) {
+        Business business = new Business();
+        business.setName(request.name());
+        business.setFinancialYearEnd(request.financialYearEnd());
+        business.setGstRegistered(request.gstRegistered());
         business.setOwner(currentUser);
-        return businessRepository.save(business);
+        return BusinessResponse.from(businessRepository.save(business));
     }
 
     @GetMapping
-    public List<Business> getAllBusinesses(@AuthenticationPrincipal User currentUser) {
-        return businessRepository.findByOwnerId(currentUser.getId());
+    public List<BusinessResponse> getAllBusinesses(@AuthenticationPrincipal User currentUser) {
+        return businessRepository.findByOwnerId(currentUser.getId()).stream().map(BusinessResponse::from).toList();
     }
 
     // @PathVariable: pulls the {id} segment out of the URL into this parameter.
@@ -77,13 +80,11 @@ public class BusinessController {
         return ResponseEntity.ok(deadlines);
     }
 
-    // Deliberately never saves the client-supplied `updates` object directly - only copies its
-    // mutable fields (name/financialYearEnd/gstRegistered) onto the already-owned, already-
-    // persisted entity fetched via findByIdAndOwnerId. Same IDOR-avoidance shape as #66's fix:
-    // id and owner are never touched by anything the client sent, so there's no id/owner field
-    // to even accidentally trust.
+    // Applies a BusinessRequest's fields onto the already-owned, already-persisted entity
+    // fetched via findByIdAndOwnerId - same structural IDOR-avoidance as createBusiness above,
+    // there's no id/owner field on the request DTO for a client to even supply.
     @PutMapping("/{id}")
-    public ResponseEntity<?> updateBusiness(@PathVariable Long id, @Valid @RequestBody Business updates,
+    public ResponseEntity<?> updateBusiness(@PathVariable Long id, @Valid @RequestBody BusinessRequest request,
                                              @AuthenticationPrincipal User currentUser) {
         Optional<Business> existing = businessRepository.findByIdAndOwnerId(id, currentUser.getId());
 
@@ -92,11 +93,11 @@ public class BusinessController {
         }
 
         Business business = existing.get();
-        business.setName(updates.getName());
-        business.setFinancialYearEnd(updates.getFinancialYearEnd());
-        business.setGstRegistered(updates.isGstRegistered());
+        business.setName(request.name());
+        business.setFinancialYearEnd(request.financialYearEnd());
+        business.setGstRegistered(request.gstRegistered());
 
-        return ResponseEntity.ok(businessRepository.save(business));
+        return ResponseEntity.ok(BusinessResponse.from(businessRepository.save(business)));
     }
 
     // Deleting a business also removes its work passes and deadline records - enforced via

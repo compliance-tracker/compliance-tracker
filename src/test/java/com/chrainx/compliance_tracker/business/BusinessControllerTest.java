@@ -50,8 +50,8 @@ class BusinessControllerTest {
         return (List<Deadline>) response.getBody();
     }
 
-    private Business businessBody(ResponseEntity<?> response) {
-        return (Business) response.getBody();
+    private BusinessResponse businessBody(ResponseEntity<?> response) {
+        return (BusinessResponse) response.getBody();
     }
 
     @Test
@@ -113,33 +113,21 @@ class BusinessControllerTest {
                         && d.getDueDate().equals(LocalDate.of(2026, 11, 1))));
     }
 
+    // Note on issue #66's IDOR (a client supplying their own "id" so JPA's save() does an
+    // UPDATE instead of an INSERT): the tests that used to prove createBusiness/updateBusiness
+    // clear a client-supplied id no longer make sense as written, and were removed rather than
+    // adapted (issue #46) - BusinessRequest has no id field at all, so there's nothing to
+    // "clear" anymore. The IDOR shape is now prevented structurally, by the type system, not by
+    // runtime logic a test could still exercise.
+
     @Test
     void createBusiness_setsOwnerToCurrentUser() {
-        Business business = new Business();
-        business.setName("Test Co");
+        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false);
+        when(businessRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        when(businessRepository.save(business)).thenReturn(business);
+        BusinessResponse response = controller.createBusiness(request, currentUser);
 
-        controller.createBusiness(business, currentUser);
-
-        assertEquals(currentUser, business.getOwner());
-    }
-
-    @Test
-    void createBusiness_clearsClientSuppliedId_toPreventOverwritingAnotherUsersBusiness() {
-        // Regression test for the IDOR in issue #66: a request body can carry any "id" the
-        // caller wants (e.g. someone else's existing business id). If that id reached save()
-        // unchanged, JPA would UPDATE that row instead of inserting a new one - full takeover
-        // of another user's business. createBusiness must strip it before saving.
-        Business business = new Business();
-        business.setId(999L); // pretend this belongs to another user's existing business
-        business.setName("Hijacked Co");
-
-        when(businessRepository.save(business)).thenReturn(business);
-
-        controller.createBusiness(business, currentUser);
-
-        assertEquals(null, business.getId());
+        assertEquals("Test Co", response.name());
     }
 
     @Test
@@ -148,7 +136,7 @@ class BusinessControllerTest {
         business.setId(1L);
         when(businessRepository.findByOwnerId(1L)).thenReturn(List.of(business));
 
-        List<Business> result = controller.getAllBusinesses(currentUser);
+        List<BusinessResponse> result = controller.getAllBusinesses(currentUser);
 
         assertEquals(1, result.size());
     }
@@ -161,49 +149,25 @@ class BusinessControllerTest {
         existing.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
         existing.setGstRegistered(false);
 
-        Business updates = new Business();
-        updates.setName("New Name");
-        updates.setFinancialYearEnd(LocalDate.of(2027, 6, 30));
-        updates.setGstRegistered(true);
+        BusinessRequest request = new BusinessRequest("New Name", LocalDate.of(2027, 6, 30), true);
 
         when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(existing));
         when(businessRepository.save(existing)).thenReturn(existing);
 
-        ResponseEntity<?> response = controller.updateBusiness(1L, updates, currentUser);
+        ResponseEntity<?> response = controller.updateBusiness(1L, request, currentUser);
 
         assertEquals(200, response.getStatusCode().value());
-        assertEquals("New Name", businessBody(response).getName());
-        assertEquals(LocalDate.of(2027, 6, 30), businessBody(response).getFinancialYearEnd());
-        assertTrue(businessBody(response).isGstRegistered());
-    }
-
-    @Test
-    void updateBusiness_ignoresClientSuppliedIdAndOwner() {
-        // Same IDOR-avoidance shape as issue #66: updateBusiness never saves the client-supplied
-        // `updates` object directly, only copies its mutable fields onto the already-fetched,
-        // already-owned entity - so a client-supplied id/owner on the request body can't do
-        // anything at all, there's no code path that would ever read them.
-        Business existing = new Business();
-        existing.setId(1L);
-        existing.setName("Real Business");
-
-        Business updates = new Business();
-        updates.setId(999L); // attacker-style attempt, should simply be ignored
-        updates.setName("Updated Name");
-
-        when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(existing));
-        when(businessRepository.save(existing)).thenReturn(existing);
-
-        controller.updateBusiness(1L, updates, currentUser);
-
-        assertEquals(1L, existing.getId());
+        assertEquals("New Name", businessBody(response).name());
+        assertEquals(LocalDate.of(2027, 6, 30), businessBody(response).financialYearEnd());
+        assertTrue(businessBody(response).gstRegistered());
     }
 
     @Test
     void updateBusiness_returns404_whenBusinessDoesNotBelongToCaller() {
         when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.empty());
 
-        ResponseEntity<?> response = controller.updateBusiness(1L, new Business(), currentUser);
+        ResponseEntity<?> response = controller.updateBusiness(
+                1L, new BusinessRequest("Name", LocalDate.of(2026, 12, 31), false), currentUser);
 
         assertEquals(404, response.getStatusCode().value());
     }
