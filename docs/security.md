@@ -100,6 +100,30 @@ here. Checked in `register` only, not `login` — `AuthRequest` is shared betwee
 and this must never reject a login attempt for an existing account whose password predates this
 check.
 
+## Password reset (issue #37)
+
+`POST /api/auth/forgot-password` always returns `200`, whether or not the email actually belongs
+to an account — same enumeration-avoidance reasoning as login's identical `401` for "no such
+user" and "wrong password" above. If the account does exist, a single-use token
+(`UUID.randomUUID()`, same idiom as the JWT `jti` claim) is generated, valid for 1 hour
+(`auth.password-reset-expiration-ms`), and emailed via `AuthEmailSender` — logged, not really
+sent, unless `notifications.channel=email` is configured (see [notifications.md](notifications.md)).
+Requesting a reset again before using the first token invalidates it - only the most recently
+issued token for a given user is ever valid.
+
+`POST /api/auth/reset-password` consumes the token: `401` if it's missing, already used, or
+expired (again, the same code for all three - not a distinct "expired" vs "invalid" response,
+which would let a client probe which raw token strings once existed). A successful reset applies
+the same password strength check as registration (issue #43) and deletes every reset token for
+that user, not just the one used, so a reset genuinely ends the token's usability rather than
+leaving a second still-valid one from an earlier request.
+
+**Known limitation:** a password reset does not currently invalidate the user's existing JWT
+sessions. If an account was compromised, resetting the password stops the attacker from logging
+in again, but any access/refresh token they already obtained stays valid until its own natural
+expiry (or an explicit logout revokes it) - `TokenBlocklist` revokes by exact token string, not
+by user, so there's no "revoke every session for this user" operation yet - tracked as issue #96.
+
 ## Login rate limiting (issue #35)
 
 `LoginRateLimiter` — an in-memory, per-IP fixed-window counter (5 failed attempts per minute,
