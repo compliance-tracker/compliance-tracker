@@ -15,9 +15,11 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 // Plain unit test - no Spring context/DB involved, so it stays fast. The controller is
@@ -32,8 +34,10 @@ class BusinessControllerTest {
 
     private final BusinessRepository businessRepository = mock(BusinessRepository.class);
     private final WorkPassRepository workPassRepository = mock(WorkPassRepository.class);
+    private final IdempotencyKeyRepository idempotencyKeyRepository = mock(IdempotencyKeyRepository.class);
     private final RuleEngine ruleEngine = new RuleEngine();
-    private final BusinessController controller = new BusinessController(businessRepository, workPassRepository, ruleEngine);
+    private final BusinessController controller = new BusinessController(
+            businessRepository, workPassRepository, idempotencyKeyRepository, ruleEngine);
 
     private final User currentUser = new User();
 
@@ -125,9 +129,58 @@ class BusinessControllerTest {
         BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false);
         when(businessRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        BusinessResponse response = controller.createBusiness(request, currentUser);
+        BusinessResponse response = controller.createBusiness(request, null, currentUser);
 
         assertEquals("Test Co", response.name());
+    }
+
+    @Test
+    void createBusiness_withoutIdempotencyKey_neverTouchesTheIdempotencyRepository() {
+        // The header is entirely opt-in (issue #61) - an existing caller that never sends it
+        // must see zero behavior change, not just "the same result" but literally no extra
+        // queries against a table it doesn't know exists.
+        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false);
+        when(businessRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        controller.createBusiness(request, null, currentUser);
+
+        verifyNoInteractions(idempotencyKeyRepository);
+    }
+
+    @Test
+    void createBusiness_withNewIdempotencyKey_createsABusiness_andRecordsTheKey() {
+        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false);
+        Business saved = new Business();
+        saved.setId(5L);
+        saved.setName("Test Co");
+        when(idempotencyKeyRepository.findByKeyAndOwnerId("key-123", 1L)).thenReturn(Optional.empty());
+        when(businessRepository.save(any())).thenReturn(saved);
+
+        BusinessResponse response = controller.createBusiness(request, "key-123", currentUser);
+
+        assertEquals(5L, response.id());
+        verify(idempotencyKeyRepository).save(argThat(record ->
+                record.getKey().equals("key-123") && record.getOwnerId().equals(1L) && record.getBusinessId().equals(5L)));
+    }
+
+    @Test
+    void createBusiness_withAlreadyUsedIdempotencyKey_returnsTheOriginalBusiness_withoutCreatingANewOne() {
+        // The actual point of the feature: a retried request (same key resent, e.g. after a
+        // client-side timeout on a request that had actually already succeeded) must not create
+        // a second business.
+        Business original = new Business();
+        original.setId(5L);
+        original.setName("Original Co");
+        IdempotencyKey existingKey = new IdempotencyKey();
+        existingKey.setBusinessId(5L);
+        when(idempotencyKeyRepository.findByKeyAndOwnerId("key-123", 1L)).thenReturn(Optional.of(existingKey));
+        when(businessRepository.findById(5L)).thenReturn(Optional.of(original));
+
+        BusinessRequest retriedRequest = new BusinessRequest("Original Co", LocalDate.of(2026, 12, 31), false);
+        BusinessResponse response = controller.createBusiness(retriedRequest, "key-123", currentUser);
+
+        assertEquals(5L, response.id());
+        verify(businessRepository, never()).save(any());
     }
 
     @Test

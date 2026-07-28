@@ -6,6 +6,7 @@ import com.chrainx.compliance_tracker.rules.Deadline;
 import com.chrainx.compliance_tracker.rules.RuleEngine;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -23,16 +24,20 @@ public class BusinessController {
 
     private final BusinessRepository businessRepository;
     private final WorkPassRepository workPassRepository;
+    private final IdempotencyKeyRepository idempotencyKeyRepository;
     private final RuleEngine ruleEngine;
 
     // @Autowired: Spring sees this constructor needs a BusinessRepository, WorkPassRepository,
-    // and RuleEngine, and since it already knows how to create all three (repositories are
-    // auto-implemented interfaces, RuleEngine is @Component), it builds them and passes them
-    // in automatically - we never call `new BusinessController(...)` ourselves.
+    // IdempotencyKeyRepository, and RuleEngine, and since it already knows how to create all
+    // four (repositories are auto-implemented interfaces, RuleEngine is @Component), it builds
+    // them and passes them in automatically - we never call `new BusinessController(...)`
+    // ourselves.
     @Autowired
-    public BusinessController(BusinessRepository businessRepository, WorkPassRepository workPassRepository, RuleEngine ruleEngine) {
+    public BusinessController(BusinessRepository businessRepository, WorkPassRepository workPassRepository,
+                               IdempotencyKeyRepository idempotencyKeyRepository, RuleEngine ruleEngine) {
         this.businessRepository = businessRepository;
         this.workPassRepository = workPassRepository;
+        this.idempotencyKeyRepository = idempotencyKeyRepository;
         this.ruleEngine = ruleEngine;
     }
 
@@ -44,14 +49,59 @@ public class BusinessController {
     // field on the request DTO at all, so the #66 IDOR shape (a client supplying their own id,
     // JPA's save() silently doing an UPDATE instead of an INSERT) is structurally impossible
     // here, not just defended against by remembering to clear a field.
+    //
+    // Idempotency-Key header (issue #61, optional - entirely opt-in, existing callers that never
+    // send it see no behavior change at all): a network retry after a timeout (the first request
+    // actually succeeded server-side, the client just never saw the response) would otherwise
+    // create a duplicate business. A client that generates one key per logical "create this
+    // business" attempt and resends the same key on retry gets the original business back
+    // instead of a second one.
     @PostMapping
-    public BusinessResponse createBusiness(@Valid @RequestBody BusinessRequest request, @AuthenticationPrincipal User currentUser) {
+    public BusinessResponse createBusiness(@Valid @RequestBody BusinessRequest request,
+                                            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+                                            @AuthenticationPrincipal User currentUser) {
+        if (idempotencyKey != null) {
+            Optional<IdempotencyKey> existing = idempotencyKeyRepository.findByKeyAndOwnerId(idempotencyKey, currentUser.getId());
+            if (existing.isPresent()) {
+                return BusinessResponse.from(businessRepository.findById(existing.get().getBusinessId()).orElseThrow());
+            }
+        }
+
         Business business = new Business();
         business.setName(request.name());
         business.setFinancialYearEnd(request.financialYearEnd());
         business.setGstRegistered(request.gstRegistered());
         business.setOwner(currentUser);
-        return BusinessResponse.from(businessRepository.save(business));
+        business = businessRepository.save(business);
+
+        if (idempotencyKey != null) {
+            business = claimIdempotencyKeyOrReturnTheWinners(idempotencyKey, currentUser.getId(), business);
+        }
+
+        return BusinessResponse.from(business);
+    }
+
+    // The lookup above isn't atomic with this insert - two concurrent requests carrying the same
+    // key can both pass that check before either commits (same race shape as issue #42's
+    // registration race), each creating its own real Business row before either records the key.
+    // The unique constraint on (idempotency_key, owner_id) is the actual enforcement point: the
+    // loser's insert fails here, and rather than leaving its already-created Business as an
+    // orphaned duplicate, it's deleted and the winner's business is returned instead - the whole
+    // point of idempotency is that a retry never results in two businesses existing.
+    private Business claimIdempotencyKeyOrReturnTheWinners(String idempotencyKey, Long ownerId, Business justCreated) {
+        IdempotencyKey record = new IdempotencyKey();
+        record.setKey(idempotencyKey);
+        record.setOwnerId(ownerId);
+        record.setBusinessId(justCreated.getId());
+
+        try {
+            idempotencyKeyRepository.save(record);
+            return justCreated;
+        } catch (DataIntegrityViolationException e) {
+            businessRepository.delete(justCreated);
+            IdempotencyKey winner = idempotencyKeyRepository.findByKeyAndOwnerId(idempotencyKey, ownerId).orElseThrow();
+            return businessRepository.findById(winner.getBusinessId()).orElseThrow();
+        }
     }
 
     @GetMapping
