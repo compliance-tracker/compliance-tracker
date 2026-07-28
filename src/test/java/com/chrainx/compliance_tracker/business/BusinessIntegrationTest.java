@@ -16,6 +16,12 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.time.LocalDate;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -213,5 +219,93 @@ class BusinessIntegrationTest {
                 "/api/businesses/" + businessId, HttpMethod.PUT, new HttpEntity<>(updates, headers), String.class);
 
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    }
+
+    // Real HTTP, deliberately - proves the Idempotency-Key header (issue #61) actually works
+    // end to end against a real Postgres-backed request, not just that the controller method
+    // returns the right Java object when called directly.
+
+    @Test
+    void createBusiness_withoutIdempotencyKey_createsANewBusinessEveryTime() {
+        // The default, unchanged behavior - confirms opting into the feature never accidentally
+        // becomes the default for callers who don't send the header at all.
+        HttpHeaders headers = authHeaders(registerAndGetToken());
+        BusinessRequest request = new BusinessRequest("Repeatable Co", LocalDate.of(2026, 12, 31), false);
+
+        Long firstId = restTemplate.postForEntity("/api/businesses", new HttpEntity<>(request, headers), BusinessResponse.class)
+                .getBody().id();
+        Long secondId = restTemplate.postForEntity("/api/businesses", new HttpEntity<>(request, headers), BusinessResponse.class)
+                .getBody().id();
+
+        assertTrue(!firstId.equals(secondId), "identical requests with no idempotency key must create two separate businesses");
+    }
+
+    @Test
+    void createBusiness_withTheSameIdempotencyKeyTwice_returnsTheSameBusiness_notADuplicate() {
+        HttpHeaders headers = authHeaders(registerAndGetToken());
+        headers.set("Idempotency-Key", "retry-key-" + System.nanoTime());
+        BusinessRequest request = new BusinessRequest("Retried Co", LocalDate.of(2026, 12, 31), false);
+        HttpEntity<BusinessRequest> entity = new HttpEntity<>(request, headers);
+
+        Long firstId = restTemplate.postForEntity("/api/businesses", entity, BusinessResponse.class).getBody().id();
+        Long secondId = restTemplate.postForEntity("/api/businesses", entity, BusinessResponse.class).getBody().id();
+
+        assertEquals(firstId, secondId);
+
+        ResponseEntity<BusinessResponse[]> listResponse = restTemplate.exchange(
+                "/api/businesses", HttpMethod.GET, new HttpEntity<>(headers), BusinessResponse[].class);
+        long matchingCount = java.util.Arrays.stream(listResponse.getBody())
+                .filter(b -> b.name().equals("Retried Co")).count();
+        assertEquals(1, matchingCount, "the retry must not have created a second business");
+    }
+
+    @Test
+    void concurrentCreateRequests_withTheSameIdempotencyKey_resultInExactlyOneBusiness() throws Exception {
+        // Regression-style test for the actual race (same shape as issue #42's registration
+        // race, see AuthIntegrationTest): two real threads firing the same create request with
+        // the same key at genuinely the same instant, against real Postgres. The
+        // application-level "does this key already exist" lookup can't prevent both from
+        // reaching save() in this window - the DB's unique constraint on
+        // (idempotency_key, owner_id) is what actually has to hold, with the loser's business
+        // deleted rather than left behind as an orphaned duplicate.
+        HttpHeaders headers = authHeaders(registerAndGetToken());
+        headers.set("Idempotency-Key", "concurrent-key-" + System.nanoTime());
+        BusinessRequest request = new BusinessRequest("Race Co", LocalDate.of(2026, 12, 31), false);
+        HttpEntity<BusinessRequest> entity = new HttpEntity<>(request, headers);
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch startLine = new CountDownLatch(1);
+
+        List<Future<ResponseEntity<BusinessResponse>>> futures = List.of(
+                executor.submit(() -> {
+                    startLine.await();
+                    return restTemplate.postForEntity("/api/businesses", entity, BusinessResponse.class);
+                }),
+                executor.submit(() -> {
+                    startLine.await();
+                    return restTemplate.postForEntity("/api/businesses", entity, BusinessResponse.class);
+                })
+        );
+
+        startLine.countDown();
+        List<Long> businessIds = futures.stream()
+                .map(f -> {
+                    try {
+                        return f.get(10, TimeUnit.SECONDS).getBody().id();
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                })
+                .toList();
+        executor.shutdown();
+
+        assertEquals(businessIds.get(0), businessIds.get(1),
+                "both concurrent requests must resolve to the same business, not two different ones");
+
+        ResponseEntity<BusinessResponse[]> listResponse = restTemplate.exchange(
+                "/api/businesses", HttpMethod.GET, new HttpEntity<>(headers), BusinessResponse[].class);
+        long matchingCount = java.util.Arrays.stream(listResponse.getBody())
+                .filter(b -> b.name().equals("Race Co")).count();
+        assertEquals(1, matchingCount, "exactly one business must exist, not one per thread");
     }
 }

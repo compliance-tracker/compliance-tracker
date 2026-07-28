@@ -38,7 +38,7 @@ a single directory before this split (issue #90):
 | Package | Contents |
 |---|---|
 | `auth` | `AuthController`/`AuthRequest`/`AuthResponse`, `JwtService`, `JwtAuthenticationFilter`, `LoginRateLimiter`, `TokenBlocklist`, `User`, `UserRepository` |
-| `business` | `Business`/`BusinessRequest`/`BusinessResponse`/`BusinessController`/`BusinessRepository`, `WorkPass`/`WorkPassRequest`/`WorkPassResponse`/`WorkPassController`/`WorkPassRepository`, `DeadlineRecord`/`DeadlineRecordRepository`, `DeadlineSyncService` |
+| `business` | `Business`/`BusinessRequest`/`BusinessResponse`/`BusinessController`/`BusinessRepository`, `WorkPass`/`WorkPassRequest`/`WorkPassResponse`/`WorkPassController`/`WorkPassRepository`, `DeadlineRecord`/`DeadlineRecordRepository`, `DeadlineSyncService`, `IdempotencyKey`/`IdempotencyKeyRepository` |
 | `config` | `SecurityConfig`, `CorsConfig`, `SchedulingConfig`, `SqsConfig` — cross-cutting `@Configuration` classes, not owned by any one feature |
 | `error` | `ApiError`, `GlobalExceptionHandler` — the consistent structured error response format (issue #47), also cross-cutting |
 | `notifications` | `NotificationSender` interface, `EmailNotificationSender`, `LoggingNotificationSender` |
@@ -85,6 +85,16 @@ Gradle convention, and it kept import parity easy to check while doing the split
   (compute and return that business's current deadlines via `RuleEngine`, including any
   work-pass renewals) over HTTP. `updateBusiness` never saves the client-supplied request DTO
   directly — only copies its fields onto the already-fetched, already-owned entity.
+  `createBusiness` also accepts an optional `Idempotency-Key` header (issue #61) — see
+  `IdempotencyKey` below.
+- **`IdempotencyKey`** / **`IdempotencyKeyRepository`** — records which business a given
+  `(idempotencyKey, ownerId)` pair already created, so a retried `POST /api/businesses` (a client
+  resending after a timeout, not knowing whether the first attempt actually succeeded) returns
+  the original business instead of creating a duplicate. The unique constraint on
+  `(idempotency_key, owner_id)` (`V4` migration) is the real enforcement point under concurrency —
+  same "check first, DB constraint is the actual guarantee" shape as issue #42's registration
+  race, extended to also delete the loser's already-created `Business` row rather than leaving it
+  behind as an orphaned duplicate.
 - **`WorkPassController`** — exposes `POST`/`GET`/`DELETE` on `/api/businesses/{id}/work-passes`,
   nested under the owning business — every operation first checks the business belongs to the
   caller (same `findByIdAndOwnerId` scoping as `BusinessController`) before touching any work
@@ -207,6 +217,11 @@ migration drops and recreates both FKs with `ON DELETE CASCADE`, so removing a b
 removes its work passes and deadline records automatically at the DB level — correct regardless
 of how a business row is ever deleted (this endpoint, a future admin tool, direct `psql`), not
 dependent on the application remembering to issue the right deletes in the right order first.
+
+**`V4__add_idempotency_keys.sql`** (issue #61): a new `idempotency_key` table recording which
+`Business` a given `(idempotency_key, owner_id)` pair already created, with a unique constraint
+on that pair — the actual concurrency guarantee, not just an application-level lookup before
+insert. See `IdempotencyKey` above.
 
 ## Planned (not built yet — see [open issues](https://github.com/compliance-tracker/compliance-tracker/issues))
 

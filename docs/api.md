@@ -12,7 +12,7 @@ table eventually being replaced by generated OpenAPI docs. Better here than move
 | POST   | `/api/auth/login`              | No             | Returns `{ token, refreshToken }` for an existing account — `429` after 5 failed attempts from the same IP within a minute |
 | POST   | `/api/auth/refresh`            | No*            | Exchanges a valid refresh token for a brand new `{ token, refreshToken }` pair — the old refresh token is revoked in the same call (single-use/rotated), so reusing it afterward gets `401`. `400` if no `Bearer` token was sent, `401` if it's missing/expired/revoked/not actually a refresh token. *Same permitAll caveat as logout below |
 | POST   | `/api/auth/logout`             | No*            | Revokes the caller's token immediately — `400` if no `Bearer` token was sent. *Not gated by `SecurityConfig` like other protected routes, but functionally requires a real token to do anything |
-| POST   | `/api/businesses`             | Yes            | Create a business, owned by the caller — `400` if `name` is blank or `financialYearEnd` is missing |
+| POST   | `/api/businesses`             | Yes            | Create a business, owned by the caller — `400` if `name` is blank or `financialYearEnd` is missing. Accepts an optional `Idempotency-Key` header (any client-generated string, typically a UUID); resending the same key returns the original business instead of creating a duplicate |
 | GET    | `/api/businesses`             | Yes            | List the caller's own businesses (not everyone's) |
 | PUT    | `/api/businesses/{id}`        | Yes            | Update name/financialYearEnd/gstRegistered — same `400` validation as create, `404` if it doesn't exist or isn't yours |
 | DELETE | `/api/businesses/{id}`        | Yes            | Delete a business — also deletes its work passes and computed deadlines (DB-level cascade). 404 if it doesn't exist or isn't yours |
@@ -33,6 +33,15 @@ Every error response across the API (issue #47) has the same JSON shape:
 instead of string-matching a status code or a human-readable message. Codes in use: `BAD_REQUEST`,
 `UNAUTHORIZED`, `CONFLICT`, `TOO_MANY_REQUESTS`, `NOT_FOUND`. `message` is for humans/logging only,
 never for a client to parse.
+
+## Idempotency (issue #61)
+
+`POST /api/businesses` accepts an optional `Idempotency-Key` header. A network retry after a
+timeout — the request actually succeeded server-side, the client just never saw the response —
+would otherwise create a duplicate business. Generate one key per logical "create this business"
+attempt (a UUID works well) and resend the same key on retry; the second request returns the
+original business unchanged instead of creating a second one. Omitting the header entirely is
+the default and always safe — every prior behavior is unchanged.
 
 ## Example
 
