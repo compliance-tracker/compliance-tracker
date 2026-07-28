@@ -38,10 +38,12 @@ class AuthControllerTest {
     // between tests.
     private final TokenBlocklist tokenBlocklist = new TokenBlocklist();
     private final PasswordResetTokenRepository passwordResetTokenRepository = mock(PasswordResetTokenRepository.class);
+    private final EmailVerificationTokenRepository emailVerificationTokenRepository = mock(EmailVerificationTokenRepository.class);
     private final AuthEmailSender authEmailSender = mock(AuthEmailSender.class);
 
     private final AuthController controller = new AuthController(userRepository, passwordEncoder, jwtService,
-            loginRateLimiter, tokenBlocklist, passwordResetTokenRepository, authEmailSender, 3_600_000L);
+            loginRateLimiter, tokenBlocklist, passwordResetTokenRepository, emailVerificationTokenRepository,
+            authEmailSender, 3_600_000L, 604_800_000L);
 
     private MockHttpServletRequest requestFrom(String ip) {
         MockHttpServletRequest request = new MockHttpServletRequest();
@@ -409,5 +411,59 @@ class AuthControllerTest {
 
         assertEquals(400, response.getStatusCode().value());
         verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void register_alsoGeneratesAndEmailsAVerificationToken() {
+        when(userRepository.findByEmail("new@example.com")).thenReturn(Optional.empty());
+
+        controller.register(new AuthRequest("new@example.com", "password123"));
+
+        verify(emailVerificationTokenRepository).save(any());
+        verify(authEmailSender).sendVerificationEmail(eq("new@example.com"), any());
+    }
+
+    @Test
+    void verifyEmail_withAValidToken_marksTheUserVerified_andDeletesTheToken() {
+        User user = new User();
+        user.setId(1L);
+        user.setEmail("owner@example.com");
+
+        EmailVerificationToken token = new EmailVerificationToken();
+        token.setToken("valid-token");
+        token.setUserId(1L);
+        token.setExpiresAt(Instant.now().plusSeconds(60));
+
+        when(emailVerificationTokenRepository.findByToken("valid-token")).thenReturn(Optional.of(token));
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+
+        ResponseEntity<?> response = controller.verifyEmail(new VerifyEmailRequest("valid-token"));
+
+        assertEquals(200, response.getStatusCode().value());
+        assertTrue(user.isEmailVerified());
+        verify(emailVerificationTokenRepository).deleteByUserId(1L);
+    }
+
+    @Test
+    void verifyEmail_returns401_whenTokenDoesNotExist() {
+        when(emailVerificationTokenRepository.findByToken("bogus-token")).thenReturn(Optional.empty());
+
+        ResponseEntity<?> response = controller.verifyEmail(new VerifyEmailRequest("bogus-token"));
+
+        assertEquals(401, response.getStatusCode().value());
+        assertEquals("UNAUTHORIZED", errorBody(response).error());
+    }
+
+    @Test
+    void verifyEmail_returns401_whenTokenHasExpired() {
+        EmailVerificationToken expired = new EmailVerificationToken();
+        expired.setToken("expired-token");
+        expired.setUserId(1L);
+        expired.setExpiresAt(Instant.now().minusSeconds(60));
+        when(emailVerificationTokenRepository.findByToken("expired-token")).thenReturn(Optional.of(expired));
+
+        ResponseEntity<?> response = controller.verifyEmail(new VerifyEmailRequest("expired-token"));
+
+        assertEquals(401, response.getStatusCode().value());
     }
 }

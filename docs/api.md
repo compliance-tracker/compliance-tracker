@@ -1,19 +1,20 @@
 # API reference
 
 Split into its own file rather than kept in the main README — the API surface is expected to
-grow (admin rule endpoints, email verification are tracked/designed but not built yet), and issue
-#21 already anticipates this manually-maintained table eventually being replaced by generated
-OpenAPI docs. Better here than moved twice.
+grow (admin rule endpoints are tracked/designed but not built yet), and issue #21 already
+anticipates this manually-maintained table eventually being replaced by generated OpenAPI docs.
+Better here than moved twice.
 
 | Method | Path                          | Auth required | Description                    |
 |--------|-------------------------------|----------------|---------------------------------|
 | GET    | `/hello`                      | No             | Smoke-test endpoint             |
-| POST   | `/api/auth/register`          | No             | Create an account, returns `{ token, refreshToken }` — `400` if the password is under 8 characters or missing a letter/digit |
+| POST   | `/api/auth/register`          | No             | Create an account, returns `{ token, refreshToken }` — `400` if the password is under 8 characters or missing a letter/digit. Also emails a verification token (informational only right now — see "Email verification" in [security.md](security.md); nothing currently checks it) |
 | POST   | `/api/auth/login`              | No             | Returns `{ token, refreshToken }` for an existing account — `429` after 5 failed attempts from the same IP within a minute |
 | POST   | `/api/auth/refresh`            | No*            | Exchanges a valid refresh token for a brand new `{ token, refreshToken }` pair — the old refresh token is revoked in the same call (single-use/rotated), so reusing it afterward gets `401`. `400` if no `Bearer` token was sent, `401` if it's missing/expired/revoked/not actually a refresh token. *Same permitAll caveat as logout below |
 | POST   | `/api/auth/logout`             | No*            | Revokes the caller's token immediately — `400` if no `Bearer` token was sent. *Not gated by `SecurityConfig` like other protected routes, but functionally requires a real token to do anything |
 | POST   | `/api/auth/forgot-password`    | No             | Always returns `200` regardless of whether the email is registered (avoids leaking which emails have accounts) — if it is, emails a single-use reset token valid for 1 hour |
 | POST   | `/api/auth/reset-password`     | No             | Consumes a token from `forgot-password` and sets a new password — `401` if the token is missing/already used/expired, `400` if the new password is too weak (same rule as registration) |
+| POST   | `/api/auth/verify-email`       | No             | Consumes the token emailed on registration, marks the account verified — `401` if the token is missing/already used/expired (valid for 7 days) |
 | POST   | `/api/businesses`             | Yes            | Create a business, owned by the caller — `400` if `name` is blank or `financialYearEnd` is missing. Accepts an optional `Idempotency-Key` header (any client-generated string, typically a UUID); resending the same key returns the original business instead of creating a duplicate |
 | GET    | `/api/businesses`             | Yes            | List the caller's own businesses (not everyone's) |
 | PUT    | `/api/businesses/{id}`        | Yes            | Update name/financialYearEnd/gstRegistered — same `400` validation as create, `404` if it doesn't exist or isn't yours |

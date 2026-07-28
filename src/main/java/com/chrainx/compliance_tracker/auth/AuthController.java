@@ -25,24 +25,42 @@ public class AuthController {
     private final LoginRateLimiter loginRateLimiter;
     private final TokenBlocklist tokenBlocklist;
     private final PasswordResetTokenRepository passwordResetTokenRepository;
+    private final EmailVerificationTokenRepository emailVerificationTokenRepository;
     private final AuthEmailSender authEmailSender;
     private final long passwordResetExpirationMs;
+    private final long emailVerificationExpirationMs;
 
     @Autowired
     public AuthController(UserRepository userRepository, PasswordEncoder passwordEncoder, JwtService jwtService,
                            LoginRateLimiter loginRateLimiter, TokenBlocklist tokenBlocklist,
-                           PasswordResetTokenRepository passwordResetTokenRepository, AuthEmailSender authEmailSender,
-                           @Value("${auth.password-reset-expiration-ms}") long passwordResetExpirationMs) {
+                           PasswordResetTokenRepository passwordResetTokenRepository,
+                           EmailVerificationTokenRepository emailVerificationTokenRepository,
+                           AuthEmailSender authEmailSender,
+                           @Value("${auth.password-reset-expiration-ms}") long passwordResetExpirationMs,
+                           @Value("${auth.email-verification-expiration-ms}") long emailVerificationExpirationMs) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.loginRateLimiter = loginRateLimiter;
         this.tokenBlocklist = tokenBlocklist;
         this.passwordResetTokenRepository = passwordResetTokenRepository;
+        this.emailVerificationTokenRepository = emailVerificationTokenRepository;
         this.authEmailSender = authEmailSender;
         this.passwordResetExpirationMs = passwordResetExpirationMs;
+        this.emailVerificationExpirationMs = emailVerificationExpirationMs;
     }
 
+    // Deliberately NOT @Transactional, unlike forgotPassword/resetPassword/verifyEmail below -
+    // tried it, and it broke issue #42's registration-race handling. With @Transactional here,
+    // userRepository.save(user) no longer runs in its own transaction (Spring Data JPA's
+    // SimpleJpaRepository methods are @Transactional themselves, but nested calls join the
+    // caller's existing transaction rather than opening a new one) - so Hibernate can defer the
+    // actual INSERT (and its unique-constraint check) until the transaction commits, which
+    // happens in the @Transactional proxy *after* this method body already returned, past the
+    // try/catch entirely. The result: the #42 concurrency test started failing both requests
+    // instead of splitting cleanly into one 200 + one 409. Found live re-running that exact
+    // test after adding @Transactional here, not assumed - removed it once the failure pointed
+    // straight at the change. register doesn't need it anyway (no derived delete query here).
     @PostMapping("/register")
     public ResponseEntity<?> register(@RequestBody AuthRequest request) {
         if (isTooWeak(request.password())) {
@@ -71,6 +89,17 @@ public class AuthController {
             // already returns above.
             return ResponseEntity.status(409).body(new ApiError("CONFLICT", "An account with this email already exists."));
         }
+
+        // Fires and forgets a verification email (issue #36) - deliberately doesn't block or
+        // gate the response on this. The account is real and immediately usable either way;
+        // email ownership is proven separately, on its own time, not a precondition for using
+        // the app at all right now (see User.emailVerified's own comment).
+        EmailVerificationToken verificationToken = new EmailVerificationToken();
+        verificationToken.setToken(UUID.randomUUID().toString());
+        verificationToken.setUserId(user.getId());
+        verificationToken.setExpiresAt(Instant.now().plusMillis(emailVerificationExpirationMs));
+        emailVerificationTokenRepository.save(verificationToken);
+        authEmailSender.sendVerificationEmail(user.getEmail(), verificationToken.getToken());
 
         return ResponseEntity.ok(new AuthResponse(
                 jwtService.generateAccessToken(user.getEmail()), jwtService.generateRefreshToken(user.getEmail())));
@@ -210,6 +239,27 @@ public class AuthController {
         // the (should-be-rare, given forgotPassword also clears old ones) case of more than one
         // row existing for the same user at once.
         passwordResetTokenRepository.deleteByUserId(user.getId());
+
+        return ResponseEntity.ok().build();
+    }
+
+    // Consumes a token from register's verification email (issue #36). 401 if it's missing,
+    // already used, or expired - same enumeration-resistant single code as reset-password above,
+    // not a distinct "invalid" vs "expired" response. @Transactional for the same
+    // derived-delete-query reason as forgotPassword/resetPassword.
+    @Transactional
+    @PostMapping("/verify-email")
+    public ResponseEntity<?> verifyEmail(@RequestBody VerifyEmailRequest request) {
+        Optional<EmailVerificationToken> verificationToken = emailVerificationTokenRepository.findByToken(request.token());
+        if (verificationToken.isEmpty() || verificationToken.get().getExpiresAt().isBefore(Instant.now())) {
+            return ResponseEntity.status(401).body(new ApiError("UNAUTHORIZED", "Invalid or expired verification token."));
+        }
+
+        User user = userRepository.findById(verificationToken.get().getUserId()).orElseThrow();
+        user.setEmailVerified(true);
+        userRepository.save(user);
+
+        emailVerificationTokenRepository.deleteByUserId(user.getId());
 
         return ResponseEntity.ok().build();
     }
