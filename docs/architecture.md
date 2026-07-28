@@ -38,8 +38,9 @@ a single directory before this split (issue #90):
 | Package | Contents |
 |---|---|
 | `auth` | `AuthController`/`AuthRequest`/`AuthResponse`, `JwtService`, `JwtAuthenticationFilter`, `LoginRateLimiter`, `TokenBlocklist`, `User`, `UserRepository` |
-| `business` | `Business`/`BusinessController`/`BusinessRepository`, `WorkPass`/`WorkPassController`/`WorkPassRepository`, `DeadlineRecord`/`DeadlineRecordRepository`, `DeadlineSyncService` |
+| `business` | `Business`/`BusinessRequest`/`BusinessResponse`/`BusinessController`/`BusinessRepository`, `WorkPass`/`WorkPassRequest`/`WorkPassResponse`/`WorkPassController`/`WorkPassRepository`, `DeadlineRecord`/`DeadlineRecordRepository`, `DeadlineSyncService` |
 | `config` | `SecurityConfig`, `CorsConfig`, `SchedulingConfig`, `SqsConfig` — cross-cutting `@Configuration` classes, not owned by any one feature |
+| `error` | `ApiError`, `GlobalExceptionHandler` — the consistent structured error response format (issue #47), also cross-cutting |
 | `notifications` | `NotificationSender` interface, `EmailNotificationSender`, `LoggingNotificationSender` |
 | `queue` | `SqsDispatchService`, `ReminderWorkerService`, `ReminderMessage` |
 | `rules` | Pure rules-engine logic (`RuleEngine`, `Deadline`, `ObligationType`) — predates this split, was already its own package |
@@ -51,16 +52,21 @@ Gradle convention, and it kept import parity easy to check while doing the split
 ## Domain layer
 
 - **`Business`** — entity representing an SME and the parameters its compliance deadlines are
-  computed from (`name`, `financialYearEnd`, `gstRegistered`). `name`/`financialYearEnd` carry
-  Bean Validation annotations (`@NotBlank`/`@NotNull`, issue #20), enforced via `@Valid` on the
-  `@RequestBody` in `BusinessController`'s create/update endpoints — a blank name or missing FYE
-  gets a `400` instead of silently persisting.
+  computed from (`name`, `financialYearEnd`, `gstRegistered`). Never bound directly from a
+  request or serialized directly into a response (issue #46) — `BusinessRequest`/
+  `BusinessResponse` are the API's actual contract; this is purely the persistence shape.
+- **`BusinessRequest`** / **`BusinessResponse`** — the API's actual contract for a business
+  (issue #46), separate from the JPA entity. `BusinessRequest` carries the Bean Validation
+  annotations (`@NotBlank`/`@NotNull`, issue #20) and deliberately has no `id`/`owner` field at
+  all — not just fields a controller has to remember to clear — so the #66-style IDOR (a client
+  supplying their own `id`, JPA's `save()` silently doing an `UPDATE` instead of an `INSERT`) is
+  structurally impossible, not just defended against.
 - **`BusinessRepository`** — Spring Data JPA repository interface. Extending `JpaRepository`
   gives `save`/`findAll`/`findById`/etc. for free, with no method bodies written — Spring
   generates the implementation at runtime.
 - **`WorkPass`** — entity representing one employee's work pass (`employeeName`, `expiryDate`),
-  many-to-one linked back to the `Business` that employs them. Same Bean Validation treatment as
-  `Business` (issue #20) — a blank `employeeName` or missing `expiryDate` gets a `400`.
+  many-to-one linked back to the `Business` that employs them. Same DTO separation as `Business`
+  above — `WorkPassRequest`/`WorkPassResponse` are the real contract.
 - **`WorkPassRepository`** — Spring Data JPA repository. Includes `findByBusinessId(Long)`,
   whose implementation Spring derives entirely from the method name (no query written by hand).
 - **`RuleEngine`** — pure, unit-tested Java logic (`rules` package). Given a `Business`, its
@@ -77,9 +83,8 @@ Gradle convention, and it kept import parity easy to check while doing the split
   to work passes and deadline records via `V3__cascade_delete_business_dependents.sql`, not
   application code — see "Database migrations" below), and `GET /api/businesses/{id}/deadlines`
   (compute and return that business's current deadlines via `RuleEngine`, including any
-  work-pass renewals) over HTTP. `updateBusiness` never saves the client-supplied request body
-  directly — only copies its mutable fields onto the already-fetched, already-owned entity, the
-  same IDOR-avoidance shape as issue #66's fix on `createBusiness`.
+  work-pass renewals) over HTTP. `updateBusiness` never saves the client-supplied request DTO
+  directly — only copies its fields onto the already-fetched, already-owned entity.
 - **`WorkPassController`** — exposes `POST`/`GET`/`DELETE` on `/api/businesses/{id}/work-passes`,
   nested under the owning business — every operation first checks the business belongs to the
   caller (same `findByIdAndOwnerId` scoping as `BusinessController`) before touching any work

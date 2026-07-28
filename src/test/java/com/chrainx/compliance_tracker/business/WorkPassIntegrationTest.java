@@ -23,6 +23,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 // proves the Java logic against mocked repositories, but only a real HTTP call through the real
 // security filter chain and real Postgres can prove that a business a user doesn't own actually
 // stays inaccessible end to end (issue #24).
+//
+// Uses WorkPassRequest/WorkPassResponse throughout (issue #46), not the WorkPass entity.
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureTestRestTemplate
 @ActiveProfiles("test")
@@ -45,13 +47,10 @@ class WorkPassIntegrationTest {
     }
 
     private Long createBusiness(HttpHeaders headers) {
-        Business business = new Business();
-        business.setName("WorkPass E2E Test Co");
-        business.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
-        business.setGstRegistered(false);
+        BusinessRequest request = new BusinessRequest("WorkPass E2E Test Co", LocalDate.of(2026, 12, 31), false);
 
-        return restTemplate.postForEntity("/api/businesses", new HttpEntity<>(business, headers), Business.class)
-                .getBody().getId();
+        return restTemplate.postForEntity("/api/businesses", new HttpEntity<>(request, headers), BusinessResponse.class)
+                .getBody().id();
     }
 
     @Test
@@ -59,22 +58,20 @@ class WorkPassIntegrationTest {
         HttpHeaders headers = authHeaders(registerAndGetToken());
         Long businessId = createBusiness(headers);
 
-        WorkPass pass = new WorkPass();
-        pass.setEmployeeName("Jane Doe");
-        pass.setExpiryDate(LocalDate.of(2026, 11, 1));
+        WorkPassRequest pass = new WorkPassRequest("Jane Doe", LocalDate.of(2026, 11, 1));
 
-        ResponseEntity<WorkPass> createResponse = restTemplate.postForEntity(
-                "/api/businesses/" + businessId + "/work-passes", new HttpEntity<>(pass, headers), WorkPass.class);
+        ResponseEntity<WorkPassResponse> createResponse = restTemplate.postForEntity(
+                "/api/businesses/" + businessId + "/work-passes", new HttpEntity<>(pass, headers), WorkPassResponse.class);
         assertEquals(HttpStatus.OK, createResponse.getStatusCode());
-        assertEquals("Jane Doe", createResponse.getBody().getEmployeeName());
+        assertEquals("Jane Doe", createResponse.getBody().employeeName());
 
-        ResponseEntity<WorkPass[]> listResponse = restTemplate.exchange(
+        ResponseEntity<WorkPassResponse[]> listResponse = restTemplate.exchange(
                 "/api/businesses/" + businessId + "/work-passes", HttpMethod.GET,
-                new HttpEntity<>(headers), WorkPass[].class);
+                new HttpEntity<>(headers), WorkPassResponse[].class);
 
         assertEquals(HttpStatus.OK, listResponse.getStatusCode());
         assertTrue(java.util.Arrays.stream(listResponse.getBody())
-                .anyMatch(p -> p.getEmployeeName().equals("Jane Doe")));
+                .anyMatch(p -> p.employeeName().equals("Jane Doe")));
     }
 
     @Test
@@ -84,9 +81,7 @@ class WorkPassIntegrationTest {
 
         HttpHeaders headersB = authHeaders(registerAndGetToken());
 
-        WorkPass pass = new WorkPass();
-        pass.setEmployeeName("Should Not Be Created");
-        pass.setExpiryDate(LocalDate.of(2026, 11, 1));
+        WorkPassRequest pass = new WorkPassRequest("Should Not Be Created", LocalDate.of(2026, 11, 1));
 
         ResponseEntity<String> response = restTemplate.postForEntity(
                 "/api/businesses/" + businessAId + "/work-passes", new HttpEntity<>(pass, headersB), String.class);
@@ -99,25 +94,23 @@ class WorkPassIntegrationTest {
         HttpHeaders headers = authHeaders(registerAndGetToken());
         Long businessId = createBusiness(headers);
 
-        WorkPass pass = new WorkPass();
-        pass.setEmployeeName("To Be Deleted");
-        pass.setExpiryDate(LocalDate.of(2026, 11, 1));
+        WorkPassRequest pass = new WorkPassRequest("To Be Deleted", LocalDate.of(2026, 11, 1));
 
         Long passId = restTemplate.postForEntity(
-                "/api/businesses/" + businessId + "/work-passes", new HttpEntity<>(pass, headers), WorkPass.class)
-                .getBody().getId();
+                "/api/businesses/" + businessId + "/work-passes", new HttpEntity<>(pass, headers), WorkPassResponse.class)
+                .getBody().id();
 
         ResponseEntity<Void> deleteResponse = restTemplate.exchange(
                 "/api/businesses/" + businessId + "/work-passes/" + passId, HttpMethod.DELETE,
                 new HttpEntity<>(headers), Void.class);
         assertEquals(HttpStatus.NO_CONTENT, deleteResponse.getStatusCode());
 
-        ResponseEntity<WorkPass[]> listResponse = restTemplate.exchange(
+        ResponseEntity<WorkPassResponse[]> listResponse = restTemplate.exchange(
                 "/api/businesses/" + businessId + "/work-passes", HttpMethod.GET,
-                new HttpEntity<>(headers), WorkPass[].class);
+                new HttpEntity<>(headers), WorkPassResponse[].class);
 
         assertTrue(java.util.Arrays.stream(listResponse.getBody())
-                .noneMatch(p -> p.getId().equals(passId)));
+                .noneMatch(p -> p.id().equals(passId)));
     }
 
     @Test
@@ -125,13 +118,11 @@ class WorkPassIntegrationTest {
         HttpHeaders headersA = authHeaders(registerAndGetToken());
         Long businessAId = createBusiness(headersA);
 
-        WorkPass pass = new WorkPass();
-        pass.setEmployeeName("Owned By A");
-        pass.setExpiryDate(LocalDate.of(2026, 11, 1));
+        WorkPassRequest pass = new WorkPassRequest("Owned By A", LocalDate.of(2026, 11, 1));
 
         Long passId = restTemplate.postForEntity(
-                "/api/businesses/" + businessAId + "/work-passes", new HttpEntity<>(pass, headersA), WorkPass.class)
-                .getBody().getId();
+                "/api/businesses/" + businessAId + "/work-passes", new HttpEntity<>(pass, headersA), WorkPassResponse.class)
+                .getBody().id();
 
         HttpHeaders headersB = authHeaders(registerAndGetToken());
 
@@ -149,9 +140,7 @@ class WorkPassIntegrationTest {
         HttpHeaders headers = authHeaders(registerAndGetToken());
         Long businessId = createBusiness(headers);
 
-        WorkPass pass = new WorkPass();
-        pass.setEmployeeName("");
-        pass.setExpiryDate(LocalDate.of(2026, 11, 1));
+        WorkPassRequest pass = new WorkPassRequest("", LocalDate.of(2026, 11, 1));
 
         ResponseEntity<String> response = restTemplate.postForEntity(
                 "/api/businesses/" + businessId + "/work-passes", new HttpEntity<>(pass, headers), String.class);
@@ -164,8 +153,7 @@ class WorkPassIntegrationTest {
         HttpHeaders headers = authHeaders(registerAndGetToken());
         Long businessId = createBusiness(headers);
 
-        WorkPass pass = new WorkPass();
-        pass.setEmployeeName("Jane Doe");
+        WorkPassRequest pass = new WorkPassRequest("Jane Doe", null);
 
         ResponseEntity<String> response = restTemplate.postForEntity(
                 "/api/businesses/" + businessId + "/work-passes", new HttpEntity<>(pass, headers), String.class);

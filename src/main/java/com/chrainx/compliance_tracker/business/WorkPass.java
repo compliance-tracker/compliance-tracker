@@ -2,12 +2,14 @@ package com.chrainx.compliance_tracker.business;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import java.time.LocalDate;
 
 // Separate entity (not a field on Business) because one business can have many employees,
 // each holding their own work pass with its own expiry date.
+//
+// Never bound directly from a request or serialized directly into a response (issue #46) -
+// WorkPassRequest/WorkPassResponse are the API's actual contract. Bean Validation lives on
+// WorkPassRequest now, not here.
 @Entity
 public class WorkPass {
 
@@ -15,11 +17,8 @@ public class WorkPass {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // Same reasoning as Business's fields (issue #20) - checked on @Valid @RequestBody binding.
-    @NotBlank
     private String employeeName;
 
-    @NotNull
     private LocalDate expiryDate;
 
     // Many WorkPass rows can point to the same Business (many-to-one).

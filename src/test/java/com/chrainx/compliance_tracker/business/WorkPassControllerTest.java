@@ -9,7 +9,6 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
@@ -31,35 +30,38 @@ class WorkPassControllerTest {
     // Controller methods now return ResponseEntity<?> (issue #47 - the success body and the
     // ApiError error body are different types), so tests cast the body where they inspect it.
     @SuppressWarnings("unchecked")
-    private List<WorkPass> workPassesBody(ResponseEntity<?> response) {
-        return (List<WorkPass>) response.getBody();
+    private List<WorkPassResponse> workPassesBody(ResponseEntity<?> response) {
+        return (List<WorkPassResponse>) response.getBody();
     }
 
+    // Note on issue #66's IDOR: the test that used to prove createWorkPass clears a
+    // client-supplied id no longer applies as written (issue #46) - WorkPassRequest has no id
+    // field at all, so there's nothing to clear. Prevented structurally now, not by runtime
+    // logic a test could still exercise.
+
     @Test
-    void createWorkPass_scopesToOwnedBusiness_andClearsClientSuppliedId() {
+    void createWorkPass_scopesToOwnedBusiness() {
         Business business = new Business();
         business.setId(10L);
 
-        WorkPass workPass = new WorkPass();
-        workPass.setId(999L); // an attacker-style attempt to target an existing row - see #66
-        workPass.setEmployeeName("Jane Doe");
-        workPass.setExpiryDate(LocalDate.of(2026, 12, 31));
+        WorkPassRequest request = new WorkPassRequest("Jane Doe", LocalDate.of(2026, 12, 31));
 
         when(businessRepository.findByIdAndOwnerId(10L, 1L)).thenReturn(Optional.of(business));
-        when(workPassRepository.save(workPass)).thenReturn(workPass);
+        when(workPassRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        ResponseEntity<?> response = controller.createWorkPass(10L, workPass, currentUser);
+        ResponseEntity<?> response = controller.createWorkPass(10L, request, currentUser);
 
         assertEquals(200, response.getStatusCode().value());
-        assertNull(workPass.getId());
-        assertEquals(business, workPass.getBusiness());
+        WorkPassResponse body = (WorkPassResponse) response.getBody();
+        assertEquals("Jane Doe", body.employeeName());
     }
 
     @Test
     void createWorkPass_returns404_whenBusinessDoesNotBelongToCaller() {
         when(businessRepository.findByIdAndOwnerId(10L, 1L)).thenReturn(Optional.empty());
 
-        ResponseEntity<?> response = controller.createWorkPass(10L, new WorkPass(), currentUser);
+        ResponseEntity<?> response = controller.createWorkPass(
+                10L, new WorkPassRequest("Jane Doe", LocalDate.of(2026, 12, 31)), currentUser);
 
         assertEquals(404, response.getStatusCode().value());
         verify(workPassRepository, never()).save(any());

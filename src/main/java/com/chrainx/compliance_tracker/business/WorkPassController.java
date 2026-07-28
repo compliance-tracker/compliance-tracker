@@ -28,20 +28,23 @@ public class WorkPassController {
         this.workPassRepository = workPassRepository;
     }
 
+    // Binds a WorkPassRequest, not the entity itself (issue #46) - no id/business field on the
+    // request DTO at all, so the same #66-style IDOR (a client supplying the id of an existing
+    // pass, even one belonging to a different business, and JPA's save() UPDATE-ing that row
+    // instead of inserting a new one) is structurally impossible here.
     @PostMapping
-    public ResponseEntity<?> createWorkPass(@PathVariable Long businessId, @Valid @RequestBody WorkPass workPass,
+    public ResponseEntity<?> createWorkPass(@PathVariable Long businessId, @Valid @RequestBody WorkPassRequest request,
                                              @AuthenticationPrincipal User currentUser) {
         Optional<Business> business = businessRepository.findByIdAndOwnerId(businessId, currentUser.getId());
         if (business.isEmpty()) {
             return ResponseEntity.status(404).body(new ApiError("NOT_FOUND", "Business not found."));
         }
 
-        // Same defensive clearing as issue #66's fix on Business - without this, a client
-        // could supply the id of an existing work pass (even one belonging to a different
-        // business) and JPA's save() would UPDATE that row instead of inserting a new one.
-        workPass.setId(null);
+        WorkPass workPass = new WorkPass();
+        workPass.setEmployeeName(request.employeeName());
+        workPass.setExpiryDate(request.expiryDate());
         workPass.setBusiness(business.get());
-        return ResponseEntity.ok(workPassRepository.save(workPass));
+        return ResponseEntity.ok(WorkPassResponse.from(workPassRepository.save(workPass)));
     }
 
     @GetMapping
@@ -51,7 +54,7 @@ public class WorkPassController {
             return ResponseEntity.status(404).body(new ApiError("NOT_FOUND", "Business not found."));
         }
 
-        return ResponseEntity.ok(workPassRepository.findByBusinessId(businessId));
+        return ResponseEntity.ok(workPassRepository.findByBusinessId(businessId).stream().map(WorkPassResponse::from).toList());
     }
 
     @DeleteMapping("/{workPassId}")

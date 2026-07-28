@@ -1,6 +1,7 @@
 package com.chrainx.compliance_tracker.business;
 import com.chrainx.compliance_tracker.auth.AuthResponse;
 import com.chrainx.compliance_tracker.auth.AuthRequest;
+import com.chrainx.compliance_tracker.error.ApiError;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,6 +24,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 // ownership scoping actually holds through the real security filter chain and real Postgres,
 // and (for delete) that the V3 migration's ON DELETE CASCADE genuinely works, not just that the
 // application code compiles against a schema that happens to match in theory.
+//
+// Uses BusinessRequest/BusinessResponse throughout (issue #46), not the Business entity - the
+// point of this test suite is proving what a real HTTP client actually sends/receives, which is
+// the DTOs, not whatever shape the entity happens to be internally.
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureTestRestTemplate
 @ActiveProfiles("test")
@@ -48,13 +53,10 @@ class BusinessIntegrationTest {
     }
 
     private Long createBusiness(HttpHeaders headers, String name) {
-        Business business = new Business();
-        business.setName(name);
-        business.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
-        business.setGstRegistered(false);
+        BusinessRequest request = new BusinessRequest(name, LocalDate.of(2026, 12, 31), false);
 
-        return restTemplate.postForEntity("/api/businesses", new HttpEntity<>(business, headers), Business.class)
-                .getBody().getId();
+        return restTemplate.postForEntity("/api/businesses", new HttpEntity<>(request, headers), BusinessResponse.class)
+                .getBody().id();
     }
 
     @Test
@@ -62,23 +64,20 @@ class BusinessIntegrationTest {
         HttpHeaders headers = authHeaders(registerAndGetToken());
         Long businessId = createBusiness(headers, "Original Name");
 
-        Business updates = new Business();
-        updates.setName("Corrected Name");
-        updates.setFinancialYearEnd(LocalDate.of(2027, 3, 31));
-        updates.setGstRegistered(true);
+        BusinessRequest updates = new BusinessRequest("Corrected Name", LocalDate.of(2027, 3, 31), true);
 
-        ResponseEntity<Business> updateResponse = restTemplate.exchange(
-                "/api/businesses/" + businessId, HttpMethod.PUT, new HttpEntity<>(updates, headers), Business.class);
+        ResponseEntity<BusinessResponse> updateResponse = restTemplate.exchange(
+                "/api/businesses/" + businessId, HttpMethod.PUT, new HttpEntity<>(updates, headers), BusinessResponse.class);
 
         assertEquals(HttpStatus.OK, updateResponse.getStatusCode());
-        assertEquals("Corrected Name", updateResponse.getBody().getName());
-        assertEquals(LocalDate.of(2027, 3, 31), updateResponse.getBody().getFinancialYearEnd());
-        assertTrue(updateResponse.getBody().isGstRegistered());
+        assertEquals("Corrected Name", updateResponse.getBody().name());
+        assertEquals(LocalDate.of(2027, 3, 31), updateResponse.getBody().financialYearEnd());
+        assertTrue(updateResponse.getBody().gstRegistered());
 
-        ResponseEntity<Business[]> listResponse = restTemplate.exchange(
-                "/api/businesses", HttpMethod.GET, new HttpEntity<>(headers), Business[].class);
+        ResponseEntity<BusinessResponse[]> listResponse = restTemplate.exchange(
+                "/api/businesses", HttpMethod.GET, new HttpEntity<>(headers), BusinessResponse[].class);
         assertTrue(java.util.Arrays.stream(listResponse.getBody())
-                .anyMatch(b -> b.getId().equals(businessId) && b.getName().equals("Corrected Name")));
+                .anyMatch(b -> b.id().equals(businessId) && b.name().equals("Corrected Name")));
     }
 
     @Test
@@ -88,20 +87,17 @@ class BusinessIntegrationTest {
 
         HttpHeaders headersB = authHeaders(registerAndGetToken());
 
-        Business updates = new Business();
-        updates.setName("Hijacked Name");
-        updates.setFinancialYearEnd(LocalDate.of(2027, 3, 31));
-        updates.setGstRegistered(true);
+        BusinessRequest updates = new BusinessRequest("Hijacked Name", LocalDate.of(2027, 3, 31), true);
 
         ResponseEntity<String> response = restTemplate.exchange(
                 "/api/businesses/" + businessAId, HttpMethod.PUT, new HttpEntity<>(updates, headersB), String.class);
 
         assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
 
-        ResponseEntity<Business[]> listResponse = restTemplate.exchange(
-                "/api/businesses", HttpMethod.GET, new HttpEntity<>(headersA), Business[].class);
+        ResponseEntity<BusinessResponse[]> listResponse = restTemplate.exchange(
+                "/api/businesses", HttpMethod.GET, new HttpEntity<>(headersA), BusinessResponse[].class);
         assertTrue(java.util.Arrays.stream(listResponse.getBody())
-                .anyMatch(b -> b.getId().equals(businessAId) && b.getName().equals("User A's Business")));
+                .anyMatch(b -> b.id().equals(businessAId) && b.name().equals("User A's Business")));
     }
 
     @Test
@@ -113,10 +109,10 @@ class BusinessIntegrationTest {
                 "/api/businesses/" + businessId, HttpMethod.DELETE, new HttpEntity<>(headers), Void.class);
         assertEquals(HttpStatus.NO_CONTENT, deleteResponse.getStatusCode());
 
-        ResponseEntity<Business[]> listResponse = restTemplate.exchange(
-                "/api/businesses", HttpMethod.GET, new HttpEntity<>(headers), Business[].class);
+        ResponseEntity<BusinessResponse[]> listResponse = restTemplate.exchange(
+                "/api/businesses", HttpMethod.GET, new HttpEntity<>(headers), BusinessResponse[].class);
         assertTrue(java.util.Arrays.stream(listResponse.getBody())
-                .noneMatch(b -> b.getId().equals(businessId)));
+                .noneMatch(b -> b.id().equals(businessId)));
     }
 
     @Test
@@ -130,10 +126,10 @@ class BusinessIntegrationTest {
                 "/api/businesses/" + businessAId, HttpMethod.DELETE, new HttpEntity<>(headersB), Void.class);
         assertEquals(HttpStatus.NOT_FOUND, deleteResponse.getStatusCode());
 
-        ResponseEntity<Business[]> listResponse = restTemplate.exchange(
-                "/api/businesses", HttpMethod.GET, new HttpEntity<>(headersA), Business[].class);
+        ResponseEntity<BusinessResponse[]> listResponse = restTemplate.exchange(
+                "/api/businesses", HttpMethod.GET, new HttpEntity<>(headersA), BusinessResponse[].class);
         assertTrue(java.util.Arrays.stream(listResponse.getBody())
-                .anyMatch(b -> b.getId().equals(businessAId)));
+                .anyMatch(b -> b.id().equals(businessAId)));
     }
 
     @Test
@@ -146,11 +142,9 @@ class BusinessIntegrationTest {
         HttpHeaders headers = authHeaders(registerAndGetToken());
         Long businessId = createBusiness(headers, "Business With Dependents");
 
-        WorkPass pass = new WorkPass();
-        pass.setEmployeeName("Jane Doe");
-        pass.setExpiryDate(LocalDate.of(2026, 11, 1));
+        WorkPassRequest pass = new WorkPassRequest("Jane Doe", LocalDate.of(2026, 11, 1));
         restTemplate.postForEntity(
-                "/api/businesses/" + businessId + "/work-passes", new HttpEntity<>(pass, headers), WorkPass.class);
+                "/api/businesses/" + businessId + "/work-passes", new HttpEntity<>(pass, headers), WorkPassResponse.class);
 
         // Real DeadlineRecord rows, not just a computed-on-the-fly rules.Deadline - calling the
         // actual scheduled sync logic directly (same method @Scheduled would call) rather than
@@ -171,12 +165,10 @@ class BusinessIntegrationTest {
     @Test
     void createBusiness_withBlankName_isRejectedWith400() {
         HttpHeaders headers = authHeaders(registerAndGetToken());
-        Business business = new Business();
-        business.setName("");
-        business.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
+        BusinessRequest request = new BusinessRequest("", LocalDate.of(2026, 12, 31), false);
 
         ResponseEntity<String> response = restTemplate.postForEntity(
-                "/api/businesses", new HttpEntity<>(business, headers), String.class);
+                "/api/businesses", new HttpEntity<>(request, headers), String.class);
 
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
     }
@@ -189,12 +181,10 @@ class BusinessIntegrationTest {
         // handler produces the same ApiError shape as every controller's own deliberate error
         // responses, not Spring Boot's default (much more verbose) validation error body.
         HttpHeaders headers = authHeaders(registerAndGetToken());
-        Business business = new Business();
-        business.setName("");
-        business.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
+        BusinessRequest request = new BusinessRequest("", LocalDate.of(2026, 12, 31), false);
 
-        ResponseEntity<com.chrainx.compliance_tracker.error.ApiError> response = restTemplate.postForEntity(
-                "/api/businesses", new HttpEntity<>(business, headers), com.chrainx.compliance_tracker.error.ApiError.class);
+        ResponseEntity<ApiError> response = restTemplate.postForEntity(
+                "/api/businesses", new HttpEntity<>(request, headers), ApiError.class);
 
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
         assertEquals("BAD_REQUEST", response.getBody().error());
@@ -204,11 +194,10 @@ class BusinessIntegrationTest {
     @Test
     void createBusiness_withNullFinancialYearEnd_isRejectedWith400() {
         HttpHeaders headers = authHeaders(registerAndGetToken());
-        Business business = new Business();
-        business.setName("Valid Name");
+        BusinessRequest request = new BusinessRequest("Valid Name", null, false);
 
         ResponseEntity<String> response = restTemplate.postForEntity(
-                "/api/businesses", new HttpEntity<>(business, headers), String.class);
+                "/api/businesses", new HttpEntity<>(request, headers), String.class);
 
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
     }
@@ -218,9 +207,7 @@ class BusinessIntegrationTest {
         HttpHeaders headers = authHeaders(registerAndGetToken());
         Long businessId = createBusiness(headers, "Original Name");
 
-        Business updates = new Business();
-        updates.setName("");
-        updates.setFinancialYearEnd(LocalDate.of(2027, 3, 31));
+        BusinessRequest updates = new BusinessRequest("", LocalDate.of(2027, 3, 31), false);
 
         ResponseEntity<String> response = restTemplate.exchange(
                 "/api/businesses/" + businessId, HttpMethod.PUT, new HttpEntity<>(updates, headers), String.class);
