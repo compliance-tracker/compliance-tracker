@@ -19,4 +19,9 @@ public class LoggingAuthEmailSender implements AuthEmailSender {
     public void sendPasswordResetEmail(String toEmail, String resetToken) {
         log.info("[PASSWORD RESET] {} - token={}", toEmail, resetToken);
     }
+
+    @Override
+    public void sendVerificationEmail(String toEmail, String verificationToken) {
+        log.info("[EMAIL VERIFICATION] {} - token={}", toEmail, verificationToken);
+    }
 }

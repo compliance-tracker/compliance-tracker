@@ -25,6 +25,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 // Real, unmocked, full-stack test: boots the actual app on a real port and makes real HTTP
@@ -52,6 +53,13 @@ class AuthIntegrationTest {
     // returned in the HTTP response itself, so there's no other way to get it for the next step.
     @Autowired
     private PasswordResetTokenRepository passwordResetTokenRepository;
+
+    // Same reasoning, for the email verification token issued on register (issue #36).
+    @Autowired
+    private EmailVerificationTokenRepository emailVerificationTokenRepository;
+
+    @Autowired
+    private UserRepository userRepository;
 
     @Test
     void unauthenticatedRequest_toBusinesses_isRejected() {
@@ -466,5 +474,59 @@ class AuthIntegrationTest {
                 Void.class);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
+    }
+
+    @Test
+    void fullEmailVerificationFlow_marksTheAccountVerified() {
+        // Real HTTP, end to end (issue #36): register -> account starts unverified -> read the
+        // real token out of the DB (only ever emailed, same technique as the password reset
+        // flow tests) -> verify-email -> account is now verified, token is gone.
+        String email = "auth-e2e-verify-" + System.nanoTime() + "@example.com";
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class);
+
+        User freshlyRegistered = userRepository.findByEmail(email).orElseThrow();
+        assertFalse(freshlyRegistered.isEmailVerified());
+
+        String realToken = emailVerificationTokenRepository.findAll().stream()
+                .filter(t -> t.getUserId().equals(freshlyRegistered.getId()))
+                .reduce((first, second) -> second)
+                .orElseThrow()
+                .getToken();
+
+        ResponseEntity<Void> verifyResponse = restTemplate.postForEntity(
+                "/api/auth/verify-email", new VerifyEmailRequest(realToken), Void.class);
+        assertEquals(HttpStatus.OK, verifyResponse.getStatusCode());
+
+        User verified = userRepository.findByEmail(email).orElseThrow();
+        assertTrue(verified.isEmailVerified());
+        assertTrue(emailVerificationTokenRepository.findByToken(realToken).isEmpty());
+    }
+
+    @Test
+    void verifyEmail_withTheSameTokenTwice_failsTheSecondTime() {
+        String email = "auth-e2e-verify-reuse-" + System.nanoTime() + "@example.com";
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class);
+
+        Long userId = userRepository.findByEmail(email).orElseThrow().getId();
+        String realToken = emailVerificationTokenRepository.findAll().stream()
+                .filter(t -> t.getUserId().equals(userId))
+                .reduce((first, second) -> second)
+                .orElseThrow()
+                .getToken();
+
+        restTemplate.postForEntity("/api/auth/verify-email", new VerifyEmailRequest(realToken), Void.class);
+        ResponseEntity<ApiError> secondAttempt = restTemplate.postForEntity(
+                "/api/auth/verify-email", new VerifyEmailRequest(realToken), ApiError.class);
+
+        assertEquals(HttpStatus.UNAUTHORIZED, secondAttempt.getStatusCode());
+    }
+
+    @Test
+    void verifyEmail_returns401_forABogusToken() {
+        ResponseEntity<ApiError> response = restTemplate.postForEntity(
+                "/api/auth/verify-email", new VerifyEmailRequest("this-token-was-never-issued"), ApiError.class);
+
+        assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
+        assertEquals("UNAUTHORIZED", response.getBody().error());
     }
 }

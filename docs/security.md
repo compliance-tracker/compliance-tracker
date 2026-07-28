@@ -124,6 +124,20 @@ in again, but any access/refresh token they already obtained stays valid until i
 expiry (or an explicit logout revokes it) - `TokenBlocklist` revokes by exact token string, not
 by user, so there's no "revoke every session for this user" operation yet - tracked as issue #96.
 
+## Email verification (issue #36)
+
+`register` now also generates a single-use token (valid 7 days, `auth.email-verification-expiration-ms`
+— deliberately longer than the password reset token above, since verifying an email is much
+lower stakes and a new user might not check their inbox right away) and emails it via the same
+`AuthEmailSender` used for password reset, marking the new account `emailVerified = false` until
+`POST /api/auth/verify-email` consumes it.
+
+**Deliberately informational only right now, not enforced.** Registration still returns real,
+immediately usable tokens regardless of verification status - nothing currently checks
+`emailVerified` or blocks an unverified account from doing anything. Gating real functionality on
+verification (e.g. requiring it before creating a business) is a natural, separate follow-up, not
+assumed to be part of introducing the flag and the flow itself.
+
 ## Login rate limiting (issue #35)
 
 `LoginRateLimiter` — an in-memory, per-IP fixed-window counter (5 failed attempts per minute,
