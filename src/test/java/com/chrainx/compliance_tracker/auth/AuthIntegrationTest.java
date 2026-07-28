@@ -1,5 +1,5 @@
 package com.chrainx.compliance_tracker.auth;
-import com.chrainx.compliance_tracker.business.Business;
+import com.chrainx.compliance_tracker.error.ApiError;
 
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
@@ -47,6 +47,12 @@ class AuthIntegrationTest {
     @Autowired
     private TestRestTemplate restTemplate;
 
+    // Autowired directly to read the reset token's real value after POST /api/auth/forgot-password
+    // - the token is only ever emailed (logged, not sent, in this test's default config), never
+    // returned in the HTTP response itself, so there's no other way to get it for the next step.
+    @Autowired
+    private PasswordResetTokenRepository passwordResetTokenRepository;
+
     @Test
     void unauthenticatedRequest_toBusinesses_isRejected() {
         ResponseEntity<String> response = restTemplate.getForEntity("/api/businesses", String.class);
@@ -84,22 +90,23 @@ class AuthIntegrationTest {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
 
-        Business newBusiness = new Business();
-        newBusiness.setName("E2E Auth Test Co");
-        newBusiness.setFinancialYearEnd(java.time.LocalDate.of(2026, 12, 31));
-        newBusiness.setGstRegistered(false);
+        com.chrainx.compliance_tracker.business.BusinessRequest newBusiness =
+                new com.chrainx.compliance_tracker.business.BusinessRequest(
+                        "E2E Auth Test Co", java.time.LocalDate.of(2026, 12, 31), false);
 
-        ResponseEntity<Business> createResponse = restTemplate.postForEntity(
-                "/api/businesses", new HttpEntity<>(newBusiness, headers), Business.class);
+        ResponseEntity<com.chrainx.compliance_tracker.business.BusinessResponse> createResponse = restTemplate.postForEntity(
+                "/api/businesses", new HttpEntity<>(newBusiness, headers),
+                com.chrainx.compliance_tracker.business.BusinessResponse.class);
         assertEquals(HttpStatus.OK, createResponse.getStatusCode());
 
-        ResponseEntity<Business[]> listResponse = restTemplate.exchange(
-                "/api/businesses", org.springframework.http.HttpMethod.GET, new HttpEntity<>(headers), Business[].class);
+        ResponseEntity<com.chrainx.compliance_tracker.business.BusinessResponse[]> listResponse = restTemplate.exchange(
+                "/api/businesses", org.springframework.http.HttpMethod.GET, new HttpEntity<>(headers),
+                com.chrainx.compliance_tracker.business.BusinessResponse[].class);
 
         assertEquals(HttpStatus.OK, listResponse.getStatusCode());
         assertTrue(listResponse.getBody().length >= 1);
         assertTrue(java.util.Arrays.stream(listResponse.getBody())
-                .anyMatch(b -> b.getName().equals("E2E Auth Test Co")));
+                .anyMatch(b -> b.name().equals("E2E Auth Test Co")));
     }
 
     @Test
@@ -107,9 +114,13 @@ class AuthIntegrationTest {
         // Full-stack regression test for issue #66: user A creates a business, then user B
         // (a completely separate account) tries to "create" a business while supplying A's
         // real business id in the request body. Before the fix, JPA's save() treated the
-        // non-null id as an UPDATE, silently handing B ownership of A's business. After the
-        // fix, the id is stripped server-side, so B gets a brand-new business and A's is
-        // untouched.
+        // non-null id as an UPDATE, silently handing B ownership of A's business.
+        //
+        // BusinessRequest (issue #46) has no id field at all, so a real Java client literally
+        // can't express this attack anymore through the typed DTO - but a real attacker isn't
+        // bound by our Java types either, they can send whatever raw JSON they want. This test
+        // sends raw JSON with an "id" field BusinessRequest doesn't declare, the realistic shape
+        // of the actual attack, and confirms it's simply ignored as an unrecognized property.
         String emailA = "auth-e2e-idor-a-" + System.nanoTime() + "@example.com";
         String emailB = "auth-e2e-idor-b-" + System.nanoTime() + "@example.com";
 
@@ -123,36 +134,37 @@ class AuthIntegrationTest {
         HttpHeaders headersA = new HttpHeaders();
         headersA.setBearerAuth(tokenA);
 
-        Business businessA = new Business();
-        businessA.setName("User A's Real Business");
-        businessA.setFinancialYearEnd(java.time.LocalDate.of(2026, 12, 31));
-        businessA.setGstRegistered(false);
+        com.chrainx.compliance_tracker.business.BusinessRequest businessA =
+                new com.chrainx.compliance_tracker.business.BusinessRequest(
+                        "User A's Real Business", java.time.LocalDate.of(2026, 12, 31), false);
 
-        ResponseEntity<Business> createAResponse = restTemplate.postForEntity(
-                "/api/businesses", new HttpEntity<>(businessA, headersA), Business.class);
-        Long businessAId = createAResponse.getBody().getId();
+        ResponseEntity<com.chrainx.compliance_tracker.business.BusinessResponse> createAResponse = restTemplate.postForEntity(
+                "/api/businesses", new HttpEntity<>(businessA, headersA),
+                com.chrainx.compliance_tracker.business.BusinessResponse.class);
+        Long businessAId = createAResponse.getBody().id();
 
         HttpHeaders headersB = new HttpHeaders();
         headersB.setBearerAuth(tokenB);
+        headersB.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
 
-        Business attackerPayload = new Business();
-        attackerPayload.setId(businessAId); // the actual exploit: reusing A's real id
-        attackerPayload.setName("Hijacked by User B");
-        attackerPayload.setFinancialYearEnd(java.time.LocalDate.of(2026, 12, 31));
-        attackerPayload.setGstRegistered(false);
+        String attackerPayload = """
+                {"id": %d, "name": "Hijacked by User B", "financialYearEnd": "2026-12-31", "gstRegistered": false}
+                """.formatted(businessAId);
 
-        ResponseEntity<Business> attackResponse = restTemplate.postForEntity(
-                "/api/businesses", new HttpEntity<>(attackerPayload, headersB), Business.class);
+        ResponseEntity<com.chrainx.compliance_tracker.business.BusinessResponse> attackResponse = restTemplate.postForEntity(
+                "/api/businesses", new HttpEntity<>(attackerPayload, headersB),
+                com.chrainx.compliance_tracker.business.BusinessResponse.class);
 
         assertEquals(HttpStatus.OK, attackResponse.getStatusCode());
-        assertTrue(attackResponse.getBody().getId() != businessAId,
+        assertTrue(!attackResponse.getBody().id().equals(businessAId),
                 "attacker's business must get a fresh id, not overwrite A's");
 
-        ResponseEntity<Business[]> listAResponse = restTemplate.exchange(
-                "/api/businesses", org.springframework.http.HttpMethod.GET, new HttpEntity<>(headersA), Business[].class);
+        ResponseEntity<com.chrainx.compliance_tracker.business.BusinessResponse[]> listAResponse = restTemplate.exchange(
+                "/api/businesses", org.springframework.http.HttpMethod.GET, new HttpEntity<>(headersA),
+                com.chrainx.compliance_tracker.business.BusinessResponse[].class);
 
         assertTrue(java.util.Arrays.stream(listAResponse.getBody())
-                .anyMatch(b -> b.getId().equals(businessAId) && b.getName().equals("User A's Real Business")),
+                .anyMatch(b -> b.id().equals(businessAId) && b.name().equals("User A's Real Business")),
                 "User A's original business must still exist, unmodified, still owned by A");
     }
 
@@ -239,7 +251,7 @@ class AuthIntegrationTest {
 
         ResponseEntity<com.chrainx.compliance_tracker.error.ApiError> loginResponse = restTemplate.postForEntity(
                 "/api/auth/login", new AuthRequest(email, "wrong-password"),
-                com.chrainx.compliance_tracker.error.ApiError.class);
+                ApiError.class);
 
         assertEquals(HttpStatus.UNAUTHORIZED, loginResponse.getStatusCode());
         assertEquals("UNAUTHORIZED", loginResponse.getBody().error());
@@ -386,5 +398,73 @@ class AuthIntegrationTest {
                 "/api/auth/refresh", new HttpEntity<>(headers), AuthResponse.class);
 
         assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
+    }
+
+    @Test
+    void fullPasswordResetFlow_letsTheUserLogInWithTheNewPasswordOnly() {
+        // Real HTTP, end to end (issue #37): register -> forgot-password -> read the real token
+        // out of the DB (the only way to get it, since it's only ever emailed) -> reset-password
+        // -> old password now fails, new password works.
+        String email = "auth-e2e-reset-" + System.nanoTime() + "@example.com";
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "old-password1"), AuthResponse.class);
+
+        ResponseEntity<Void> forgotResponse = restTemplate.postForEntity(
+                "/api/auth/forgot-password", new ForgotPasswordRequest(email), Void.class);
+        assertEquals(HttpStatus.OK, forgotResponse.getStatusCode());
+
+        String realToken = passwordResetTokenRepository.findAll().stream()
+                .filter(t -> t.getUserId() != null)
+                .reduce((first, second) -> second) // most recently inserted
+                .orElseThrow()
+                .getToken();
+
+        ResponseEntity<Void> resetResponse = restTemplate.postForEntity(
+                "/api/auth/reset-password", new ResetPasswordRequest(realToken, "new-password1"), Void.class);
+        assertEquals(HttpStatus.OK, resetResponse.getStatusCode());
+
+        ResponseEntity<AuthResponse> oldPasswordAttempt = restTemplate.postForEntity(
+                "/api/auth/login", new AuthRequest(email, "old-password1"), AuthResponse.class);
+        assertEquals(HttpStatus.UNAUTHORIZED, oldPasswordAttempt.getStatusCode());
+
+        ResponseEntity<AuthResponse> newPasswordAttempt = restTemplate.postForEntity(
+                "/api/auth/login", new AuthRequest(email, "new-password1"), AuthResponse.class);
+        assertEquals(HttpStatus.OK, newPasswordAttempt.getStatusCode());
+    }
+
+    @Test
+    void resetPassword_withTheSameTokenTwice_failsTheSecondTime() {
+        // The actual single-use guarantee, over real HTTP - a token that's already been
+        // consumed (or intercepted and reused by someone else after the legitimate reset)
+        // must not work again.
+        String email = "auth-e2e-reset-reuse-" + System.nanoTime() + "@example.com";
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "old-password1"), AuthResponse.class);
+        restTemplate.postForEntity(
+                "/api/auth/forgot-password", new ForgotPasswordRequest(email), Void.class);
+
+        String realToken = passwordResetTokenRepository.findAll().stream()
+                .filter(t -> t.getUserId() != null)
+                .reduce((first, second) -> second)
+                .orElseThrow()
+                .getToken();
+
+        restTemplate.postForEntity(
+                "/api/auth/reset-password", new ResetPasswordRequest(realToken, "new-password1"), Void.class);
+        ResponseEntity<ApiError> secondAttempt = restTemplate.postForEntity(
+                "/api/auth/reset-password", new ResetPasswordRequest(realToken, "another-password1"),
+                ApiError.class);
+
+        assertEquals(HttpStatus.UNAUTHORIZED, secondAttempt.getStatusCode());
+    }
+
+    @Test
+    void forgotPassword_forANonExistentEmail_stillReturns200() {
+        // Enumeration-avoidance, proven over real HTTP - the endpoint must behave identically
+        // whether the email exists or not.
+        ResponseEntity<Void> response = restTemplate.postForEntity(
+                "/api/auth/forgot-password",
+                new ForgotPasswordRequest("nobody-" + System.nanoTime() + "@example.com"),
+                Void.class);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
     }
 }

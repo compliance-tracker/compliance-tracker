@@ -1,6 +1,7 @@
 package com.chrainx.compliance_tracker.auth;
 
 import com.chrainx.compliance_tracker.error.ApiError;
+import com.chrainx.compliance_tracker.notifications.AuthEmailSender;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
@@ -8,12 +9,16 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import java.time.Instant;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -32,8 +37,11 @@ class AuthControllerTest {
     // Real TokenBlocklist, same reasoning - fresh instance per test, no revoked tokens leak
     // between tests.
     private final TokenBlocklist tokenBlocklist = new TokenBlocklist();
+    private final PasswordResetTokenRepository passwordResetTokenRepository = mock(PasswordResetTokenRepository.class);
+    private final AuthEmailSender authEmailSender = mock(AuthEmailSender.class);
 
-    private final AuthController controller = new AuthController(userRepository, passwordEncoder, jwtService, loginRateLimiter, tokenBlocklist);
+    private final AuthController controller = new AuthController(userRepository, passwordEncoder, jwtService,
+            loginRateLimiter, tokenBlocklist, passwordResetTokenRepository, authEmailSender, 3_600_000L);
 
     private MockHttpServletRequest requestFrom(String ip) {
         MockHttpServletRequest request = new MockHttpServletRequest();
@@ -314,5 +322,92 @@ class AuthControllerTest {
         ResponseEntity<?> response = controller.refresh(requestWithAuthHeader(null));
 
         assertEquals(400, response.getStatusCode().value());
+    }
+
+    @Test
+    void forgotPassword_forAnExistingEmail_generatesAndEmailsAToken() {
+        User user = new User();
+        user.setId(1L);
+        user.setEmail("owner@example.com");
+        when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
+
+        ResponseEntity<Void> response = controller.forgotPassword(new ForgotPasswordRequest("owner@example.com"));
+
+        assertEquals(200, response.getStatusCode().value());
+        verify(passwordResetTokenRepository).deleteByUserId(1L);
+        verify(passwordResetTokenRepository).save(any());
+        verify(authEmailSender).sendPasswordResetEmail(eq("owner@example.com"), any());
+    }
+
+    @Test
+    void forgotPassword_forANonExistentEmail_stillReturns200_withoutEmailingAnything() {
+        // Enumeration-avoidance (issue #37, same reasoning as login's identical 401) - the
+        // response must not reveal whether the email is actually registered.
+        when(userRepository.findByEmail("nobody@example.com")).thenReturn(Optional.empty());
+
+        ResponseEntity<Void> response = controller.forgotPassword(new ForgotPasswordRequest("nobody@example.com"));
+
+        assertEquals(200, response.getStatusCode().value());
+        verifyNoInteractions(authEmailSender);
+        verify(passwordResetTokenRepository, never()).save(any());
+    }
+
+    @Test
+    void resetPassword_withAValidToken_updatesThePasswordAndDeletesTheToken() {
+        User user = new User();
+        user.setId(1L);
+        user.setEmail("owner@example.com");
+        user.setPasswordHash(passwordEncoder.encode("old-password1"));
+
+        PasswordResetToken token = new PasswordResetToken();
+        token.setToken("valid-token");
+        token.setUserId(1L);
+        token.setExpiresAt(Instant.now().plusSeconds(60));
+
+        when(passwordResetTokenRepository.findByToken("valid-token")).thenReturn(Optional.of(token));
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+
+        ResponseEntity<?> response = controller.resetPassword(new ResetPasswordRequest("valid-token", "new-password1"));
+
+        assertEquals(200, response.getStatusCode().value());
+        assertTrue(passwordEncoder.matches("new-password1", user.getPasswordHash()));
+        verify(passwordResetTokenRepository).deleteByUserId(1L);
+    }
+
+    @Test
+    void resetPassword_returns401_whenTokenDoesNotExist() {
+        when(passwordResetTokenRepository.findByToken("bogus-token")).thenReturn(Optional.empty());
+
+        ResponseEntity<?> response = controller.resetPassword(new ResetPasswordRequest("bogus-token", "new-password1"));
+
+        assertEquals(401, response.getStatusCode().value());
+        assertEquals("UNAUTHORIZED", errorBody(response).error());
+    }
+
+    @Test
+    void resetPassword_returns401_whenTokenHasExpired() {
+        PasswordResetToken expired = new PasswordResetToken();
+        expired.setToken("expired-token");
+        expired.setUserId(1L);
+        expired.setExpiresAt(Instant.now().minusSeconds(60));
+        when(passwordResetTokenRepository.findByToken("expired-token")).thenReturn(Optional.of(expired));
+
+        ResponseEntity<?> response = controller.resetPassword(new ResetPasswordRequest("expired-token", "new-password1"));
+
+        assertEquals(401, response.getStatusCode().value());
+    }
+
+    @Test
+    void resetPassword_returns400_whenNewPasswordIsTooWeak() {
+        PasswordResetToken token = new PasswordResetToken();
+        token.setToken("valid-token");
+        token.setUserId(1L);
+        token.setExpiresAt(Instant.now().plusSeconds(60));
+        when(passwordResetTokenRepository.findByToken("valid-token")).thenReturn(Optional.of(token));
+
+        ResponseEntity<?> response = controller.resetPassword(new ResetPasswordRequest("valid-token", "weak"));
+
+        assertEquals(400, response.getStatusCode().value());
+        verify(userRepository, never()).save(any());
     }
 }

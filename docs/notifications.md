@@ -1,10 +1,15 @@
 # Notifications
 
-How reminders actually reach a business owner — see [architecture.md](architecture.md) for
-where `NotificationSender` sits in the reminder pipeline.
+How reminders — and, since issue #37, password reset emails — actually reach a user. See
+[architecture.md](architecture.md) for where `NotificationSender` sits in the reminder pipeline.
 
-Reminders are just logged by default — nothing to configure, safe for CI/local dev. To actually
-send real emails instead:
+The same `notifications.channel` setting controls both `NotificationSender` (reminders) and
+`AuthEmailSender` (password reset, issue #37) — one switch, two independent interfaces (a
+reminder needs a `Business`/`DeadlineRecord`, a password reset just needs an email address and a
+token), each with its own logging-default/email-opt-in pair of implementations.
+
+Reminders (and reset emails) are just logged by default — nothing to configure, safe for CI/local
+dev. To actually send real emails instead:
 
 1. Generate a Gmail **app password** at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
    (requires 2-Step Verification enabled first). Don't use your real account password — Gmail
@@ -17,8 +22,9 @@ send real emails instead:
    export NOTIFICATIONS_CHANNEL=email
    ./mvnw spring-boot:run
    ```
-3. Reminders now send to whatever email each business's owner registered with, from
-   `MAIL_USERNAME`.
+3. Reminders now send to whatever email each business's owner registered with, and password
+   reset requests (`POST /api/auth/forgot-password`) now email the real token instead of just
+   logging it - both from `MAIL_USERNAME`.
 
 Any SMTP provider works, not just Gmail — override `spring.mail.host`/`spring.mail.port` in
 `application.properties` (or as env vars) if using a different one.

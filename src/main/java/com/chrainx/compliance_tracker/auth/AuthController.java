@@ -1,12 +1,19 @@
 package com.chrainx.compliance_tracker.auth;
 
 import com.chrainx.compliance_tracker.error.ApiError;
+import com.chrainx.compliance_tracker.notifications.AuthEmailSender;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
+
+import java.time.Instant;
+import java.util.Optional;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -17,15 +24,23 @@ public class AuthController {
     private final JwtService jwtService;
     private final LoginRateLimiter loginRateLimiter;
     private final TokenBlocklist tokenBlocklist;
+    private final PasswordResetTokenRepository passwordResetTokenRepository;
+    private final AuthEmailSender authEmailSender;
+    private final long passwordResetExpirationMs;
 
     @Autowired
     public AuthController(UserRepository userRepository, PasswordEncoder passwordEncoder, JwtService jwtService,
-                           LoginRateLimiter loginRateLimiter, TokenBlocklist tokenBlocklist) {
+                           LoginRateLimiter loginRateLimiter, TokenBlocklist tokenBlocklist,
+                           PasswordResetTokenRepository passwordResetTokenRepository, AuthEmailSender authEmailSender,
+                           @Value("${auth.password-reset-expiration-ms}") long passwordResetExpirationMs) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.loginRateLimiter = loginRateLimiter;
         this.tokenBlocklist = tokenBlocklist;
+        this.passwordResetTokenRepository = passwordResetTokenRepository;
+        this.authEmailSender = authEmailSender;
+        this.passwordResetExpirationMs = passwordResetExpirationMs;
     }
 
     @PostMapping("/register")
@@ -133,6 +148,68 @@ public class AuthController {
         }
 
         tokenBlocklist.revoke(token);
+
+        return ResponseEntity.ok().build();
+    }
+
+    // Always returns 200, regardless of whether the email actually belongs to an account -
+    // same enumeration-avoidance reasoning as login's identical 401 for "no such user" and
+    // "wrong password" (issue #37). If it does exist, generates a fresh single-use token
+    // (replacing any previous one for that user, so only the most recent reset request is ever
+    // valid) and emails it via AuthEmailSender - logged, not really sent, unless
+    // notifications.channel=email is configured, same as reminder emails (issue #17).
+    //
+    // @Transactional: PasswordResetTokenRepository.deleteByUserId is a derived delete query,
+    // which (unlike the inherited save()/delete() JpaRepository already wraps its own
+    // transaction around) needs an actual transaction already open on the calling thread or it
+    // throws InvalidDataAccessApiUsageException - found live running this method for real, not
+    // assumed. Also makes the delete-then-insert here properly atomic as a bonus.
+    @Transactional
+    @PostMapping("/forgot-password")
+    public ResponseEntity<Void> forgotPassword(@RequestBody ForgotPasswordRequest request) {
+        userRepository.findByEmail(request.email()).ifPresent(user -> {
+            passwordResetTokenRepository.deleteByUserId(user.getId());
+
+            PasswordResetToken resetToken = new PasswordResetToken();
+            resetToken.setToken(UUID.randomUUID().toString());
+            resetToken.setUserId(user.getId());
+            resetToken.setExpiresAt(Instant.now().plusMillis(passwordResetExpirationMs));
+            passwordResetTokenRepository.save(resetToken);
+
+            authEmailSender.sendPasswordResetEmail(user.getEmail(), resetToken.getToken());
+        });
+
+        return ResponseEntity.ok().build();
+    }
+
+    // Consumes a token from forgotPassword above. 401 if it's missing, already used, or expired
+    // - deliberately the same code as other auth failures (not a distinct "token invalid" vs
+    // "token expired" distinction), so this can't be used to probe which tokens once existed.
+    // Same password strength check as register (issue #43) - a reset is still setting a real
+    // password, the bar shouldn't be any lower just because it arrived via a different path.
+    // @Transactional: same reasoning as forgotPassword above - deleteByUserId needs an open
+    // transaction.
+    @Transactional
+    @PostMapping("/reset-password")
+    public ResponseEntity<?> resetPassword(@RequestBody ResetPasswordRequest request) {
+        Optional<PasswordResetToken> resetToken = passwordResetTokenRepository.findByToken(request.token());
+        if (resetToken.isEmpty() || resetToken.get().getExpiresAt().isBefore(Instant.now())) {
+            return ResponseEntity.status(401).body(new ApiError("UNAUTHORIZED", "Invalid or expired reset token."));
+        }
+
+        if (isTooWeak(request.newPassword())) {
+            return ResponseEntity.status(400).body(new ApiError("BAD_REQUEST",
+                    "Password must be at least 8 characters and include a letter and a digit."));
+        }
+
+        User user = userRepository.findById(resetToken.get().getUserId()).orElseThrow();
+        user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
+        userRepository.save(user);
+
+        // Single-use: delete every token for this user, not just the one that was used - covers
+        // the (should-be-rare, given forgotPassword also clears old ones) case of more than one
+        // row existing for the same user at once.
+        passwordResetTokenRepository.deleteByUserId(user.getId());
 
         return ResponseEntity.ok().build();
     }
