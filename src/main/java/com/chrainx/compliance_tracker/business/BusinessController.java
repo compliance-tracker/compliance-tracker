@@ -1,6 +1,7 @@
 package com.chrainx.compliance_tracker.business;
 import com.chrainx.compliance_tracker.auth.User;
 
+import com.chrainx.compliance_tracker.error.ApiError;
 import com.chrainx.compliance_tracker.rules.Deadline;
 import com.chrainx.compliance_tracker.rules.RuleEngine;
 import jakarta.validation.Valid;
@@ -64,11 +65,11 @@ public class BusinessController {
     // exist at all. Deliberately not a 403: revealing "this ID exists, it's just not yours"
     // leaks more than a plain "not found" does.
     @GetMapping("/{id}/deadlines")
-    public ResponseEntity<List<Deadline>> getDeadlines(@PathVariable Long id, @AuthenticationPrincipal User currentUser) {
+    public ResponseEntity<?> getDeadlines(@PathVariable Long id, @AuthenticationPrincipal User currentUser) {
         Optional<Business> business = businessRepository.findByIdAndOwnerId(id, currentUser.getId());
 
         if (business.isEmpty()) {
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.status(404).body(new ApiError("NOT_FOUND", "Business not found."));
         }
 
         List<WorkPass> workPasses = workPassRepository.findByBusinessId(id);
@@ -82,12 +83,12 @@ public class BusinessController {
     // id and owner are never touched by anything the client sent, so there's no id/owner field
     // to even accidentally trust.
     @PutMapping("/{id}")
-    public ResponseEntity<Business> updateBusiness(@PathVariable Long id, @Valid @RequestBody Business updates,
-                                                    @AuthenticationPrincipal User currentUser) {
+    public ResponseEntity<?> updateBusiness(@PathVariable Long id, @Valid @RequestBody Business updates,
+                                             @AuthenticationPrincipal User currentUser) {
         Optional<Business> existing = businessRepository.findByIdAndOwnerId(id, currentUser.getId());
 
         if (existing.isEmpty()) {
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.status(404).body(new ApiError("NOT_FOUND", "Business not found."));
         }
 
         Business business = existing.get();
@@ -102,11 +103,11 @@ public class BusinessController {
     // ON DELETE CASCADE at the DB level (see V3 migration), not by this method issuing separate
     // deletes, so it stays correct regardless of how a business row is ever removed.
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteBusiness(@PathVariable Long id, @AuthenticationPrincipal User currentUser) {
+    public ResponseEntity<?> deleteBusiness(@PathVariable Long id, @AuthenticationPrincipal User currentUser) {
         Optional<Business> business = businessRepository.findByIdAndOwnerId(id, currentUser.getId());
 
         if (business.isEmpty()) {
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.status(404).body(new ApiError("NOT_FOUND", "Business not found."));
         }
 
         businessRepository.delete(business.get());

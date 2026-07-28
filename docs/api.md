@@ -21,6 +21,19 @@ table eventually being replaced by generated OpenAPI docs. Better here than move
 | GET    | `/api/businesses/{id}/work-passes` | Yes      | List work passes for that business — 404 if it doesn't exist or isn't yours |
 | DELETE | `/api/businesses/{id}/work-passes/{workPassId}` | Yes | Remove a work pass — 404 if either the business or the pass doesn't exist/belong to the caller |
 
+## Errors
+
+Every error response across the API (issue #47) has the same JSON shape:
+
+```json
+{ "error": "UNAUTHORIZED", "message": "Incorrect email or password." }
+```
+
+`error` is a short, machine-readable code — safe to branch on directly (`body.error === "UNAUTHORIZED"`)
+instead of string-matching a status code or a human-readable message. Codes in use: `BAD_REQUEST`,
+`UNAUTHORIZED`, `CONFLICT`, `TOO_MANY_REQUESTS`, `NOT_FOUND`. `message` is for humans/logging only,
+never for a client to parse.
+
 ## Example
 
 Register, then use the returned token for everything else:
@@ -28,7 +41,7 @@ Register, then use the returned token for everything else:
 ```bash
 TOKEN=$(curl -s -X POST http://localhost:8081/api/auth/register \
   -H "Content-Type: application/json" \
-  -d '{"email": "you@example.com", "password": "a-real-password"}' | jq -r .token)
+  -d '{"email": "you@example.com", "password": "a-real-password1"}' | jq -r .token)
 
 curl -X POST http://localhost:8081/api/businesses \
   -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \

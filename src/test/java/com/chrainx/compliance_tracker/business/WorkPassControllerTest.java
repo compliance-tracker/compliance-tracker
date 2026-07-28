@@ -28,6 +28,13 @@ class WorkPassControllerTest {
         currentUser.setEmail("owner@example.com");
     }
 
+    // Controller methods now return ResponseEntity<?> (issue #47 - the success body and the
+    // ApiError error body are different types), so tests cast the body where they inspect it.
+    @SuppressWarnings("unchecked")
+    private List<WorkPass> workPassesBody(ResponseEntity<?> response) {
+        return (List<WorkPass>) response.getBody();
+    }
+
     @Test
     void createWorkPass_scopesToOwnedBusiness_andClearsClientSuppliedId() {
         Business business = new Business();
@@ -41,7 +48,7 @@ class WorkPassControllerTest {
         when(businessRepository.findByIdAndOwnerId(10L, 1L)).thenReturn(Optional.of(business));
         when(workPassRepository.save(workPass)).thenReturn(workPass);
 
-        ResponseEntity<WorkPass> response = controller.createWorkPass(10L, workPass, currentUser);
+        ResponseEntity<?> response = controller.createWorkPass(10L, workPass, currentUser);
 
         assertEquals(200, response.getStatusCode().value());
         assertNull(workPass.getId());
@@ -52,7 +59,7 @@ class WorkPassControllerTest {
     void createWorkPass_returns404_whenBusinessDoesNotBelongToCaller() {
         when(businessRepository.findByIdAndOwnerId(10L, 1L)).thenReturn(Optional.empty());
 
-        ResponseEntity<WorkPass> response = controller.createWorkPass(10L, new WorkPass(), currentUser);
+        ResponseEntity<?> response = controller.createWorkPass(10L, new WorkPass(), currentUser);
 
         assertEquals(404, response.getStatusCode().value());
         verify(workPassRepository, never()).save(any());
@@ -68,17 +75,17 @@ class WorkPassControllerTest {
         when(businessRepository.findByIdAndOwnerId(10L, 1L)).thenReturn(Optional.of(business));
         when(workPassRepository.findByBusinessId(10L)).thenReturn(List.of(pass));
 
-        ResponseEntity<List<WorkPass>> response = controller.getWorkPasses(10L, currentUser);
+        ResponseEntity<?> response = controller.getWorkPasses(10L, currentUser);
 
         assertEquals(200, response.getStatusCode().value());
-        assertEquals(1, response.getBody().size());
+        assertEquals(1, workPassesBody(response).size());
     }
 
     @Test
     void getWorkPasses_returns404_whenBusinessDoesNotBelongToCaller() {
         when(businessRepository.findByIdAndOwnerId(10L, 1L)).thenReturn(Optional.empty());
 
-        ResponseEntity<List<WorkPass>> response = controller.getWorkPasses(10L, currentUser);
+        ResponseEntity<?> response = controller.getWorkPasses(10L, currentUser);
 
         assertEquals(404, response.getStatusCode().value());
     }
@@ -93,7 +100,7 @@ class WorkPassControllerTest {
         when(businessRepository.findByIdAndOwnerId(10L, 1L)).thenReturn(Optional.of(business));
         when(workPassRepository.findByIdAndBusinessId(1L, 10L)).thenReturn(Optional.of(pass));
 
-        ResponseEntity<Void> response = controller.deleteWorkPass(10L, 1L, currentUser);
+        ResponseEntity<?> response = controller.deleteWorkPass(10L, 1L, currentUser);
 
         assertEquals(204, response.getStatusCode().value());
         verify(workPassRepository).delete(pass);
@@ -103,7 +110,7 @@ class WorkPassControllerTest {
     void deleteWorkPass_returns404_whenBusinessDoesNotBelongToCaller() {
         when(businessRepository.findByIdAndOwnerId(10L, 1L)).thenReturn(Optional.empty());
 
-        ResponseEntity<Void> response = controller.deleteWorkPass(10L, 1L, currentUser);
+        ResponseEntity<?> response = controller.deleteWorkPass(10L, 1L, currentUser);
 
         assertEquals(404, response.getStatusCode().value());
         verify(workPassRepository, never()).delete(any());
@@ -120,7 +127,7 @@ class WorkPassControllerTest {
         when(businessRepository.findByIdAndOwnerId(10L, 1L)).thenReturn(Optional.of(business));
         when(workPassRepository.findByIdAndBusinessId(1L, 10L)).thenReturn(Optional.empty());
 
-        ResponseEntity<Void> response = controller.deleteWorkPass(10L, 1L, currentUser);
+        ResponseEntity<?> response = controller.deleteWorkPass(10L, 1L, currentUser);
 
         assertEquals(404, response.getStatusCode().value());
         verify(workPassRepository, never()).delete(any());

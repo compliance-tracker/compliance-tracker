@@ -42,6 +42,18 @@ class BusinessControllerTest {
         currentUser.setEmail("owner@example.com");
     }
 
+    // Controller methods now return ResponseEntity<?> (issue #47 - the success body and the
+    // ApiError error body are different types), so tests cast the body to whichever shape a
+    // given response actually is.
+    @SuppressWarnings("unchecked")
+    private List<Deadline> deadlinesBody(ResponseEntity<?> response) {
+        return (List<Deadline>) response.getBody();
+    }
+
+    private Business businessBody(ResponseEntity<?> response) {
+        return (Business) response.getBody();
+    }
+
     @Test
     void getDeadlines_returnsComputedDeadlines_forExistingBusiness() {
         Business business = new Business();
@@ -52,10 +64,10 @@ class BusinessControllerTest {
         when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(business));
         when(workPassRepository.findByBusinessId(1L)).thenReturn(Collections.emptyList());
 
-        ResponseEntity<List<Deadline>> response = controller.getDeadlines(1L, currentUser);
+        ResponseEntity<?> response = controller.getDeadlines(1L, currentUser);
 
         assertEquals(200, response.getStatusCode().value());
-        assertTrue(response.getBody().stream()
+        assertTrue(deadlinesBody(response).stream()
                 .anyMatch(d -> d.getObligationType() == ObligationType.ACRA_ANNUAL_RETURN));
     }
 
@@ -63,7 +75,7 @@ class BusinessControllerTest {
     void getDeadlines_returns404_whenBusinessNotFound() {
         when(businessRepository.findByIdAndOwnerId(99L, 1L)).thenReturn(Optional.empty());
 
-        ResponseEntity<List<Deadline>> response = controller.getDeadlines(99L, currentUser);
+        ResponseEntity<?> response = controller.getDeadlines(99L, currentUser);
 
         assertEquals(404, response.getStatusCode().value());
     }
@@ -76,7 +88,7 @@ class BusinessControllerTest {
         // that doesn't exist at all.
         when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.empty());
 
-        ResponseEntity<List<Deadline>> response = controller.getDeadlines(1L, currentUser);
+        ResponseEntity<?> response = controller.getDeadlines(1L, currentUser);
 
         assertEquals(404, response.getStatusCode().value());
     }
@@ -94,9 +106,9 @@ class BusinessControllerTest {
         when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(business));
         when(workPassRepository.findByBusinessId(1L)).thenReturn(List.of(pass));
 
-        ResponseEntity<List<Deadline>> response = controller.getDeadlines(1L, currentUser);
+        ResponseEntity<?> response = controller.getDeadlines(1L, currentUser);
 
-        assertTrue(response.getBody().stream()
+        assertTrue(deadlinesBody(response).stream()
                 .anyMatch(d -> d.getObligationType() == ObligationType.WORK_PASS_RENEWAL
                         && d.getDueDate().equals(LocalDate.of(2026, 11, 1))));
     }
@@ -157,12 +169,12 @@ class BusinessControllerTest {
         when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(existing));
         when(businessRepository.save(existing)).thenReturn(existing);
 
-        ResponseEntity<Business> response = controller.updateBusiness(1L, updates, currentUser);
+        ResponseEntity<?> response = controller.updateBusiness(1L, updates, currentUser);
 
         assertEquals(200, response.getStatusCode().value());
-        assertEquals("New Name", response.getBody().getName());
-        assertEquals(LocalDate.of(2027, 6, 30), response.getBody().getFinancialYearEnd());
-        assertTrue(response.getBody().isGstRegistered());
+        assertEquals("New Name", businessBody(response).getName());
+        assertEquals(LocalDate.of(2027, 6, 30), businessBody(response).getFinancialYearEnd());
+        assertTrue(businessBody(response).isGstRegistered());
     }
 
     @Test
@@ -191,7 +203,7 @@ class BusinessControllerTest {
     void updateBusiness_returns404_whenBusinessDoesNotBelongToCaller() {
         when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.empty());
 
-        ResponseEntity<Business> response = controller.updateBusiness(1L, new Business(), currentUser);
+        ResponseEntity<?> response = controller.updateBusiness(1L, new Business(), currentUser);
 
         assertEquals(404, response.getStatusCode().value());
     }
@@ -203,7 +215,7 @@ class BusinessControllerTest {
 
         when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(business));
 
-        ResponseEntity<Void> response = controller.deleteBusiness(1L, currentUser);
+        ResponseEntity<?> response = controller.deleteBusiness(1L, currentUser);
 
         assertEquals(204, response.getStatusCode().value());
         verify(businessRepository).delete(business);
@@ -213,7 +225,7 @@ class BusinessControllerTest {
     void deleteBusiness_returns404_whenBusinessDoesNotBelongToCaller() {
         when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.empty());
 
-        ResponseEntity<Void> response = controller.deleteBusiness(1L, currentUser);
+        ResponseEntity<?> response = controller.deleteBusiness(1L, currentUser);
 
         assertEquals(404, response.getStatusCode().value());
         verify(businessRepository, never()).delete(any());

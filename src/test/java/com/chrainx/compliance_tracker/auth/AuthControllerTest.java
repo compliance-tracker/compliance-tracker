@@ -1,5 +1,6 @@
 package com.chrainx.compliance_tracker.auth;
 
+import com.chrainx.compliance_tracker.error.ApiError;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
@@ -40,27 +41,39 @@ class AuthControllerTest {
         return request;
     }
 
+    // Controller methods now return ResponseEntity<?> (issue #47 - the success body and the
+    // ApiError error body are different types), so tests cast the body to whichever shape a
+    // given response actually is.
+    private AuthResponse authBody(ResponseEntity<?> response) {
+        return (AuthResponse) response.getBody();
+    }
+
+    private ApiError errorBody(ResponseEntity<?> response) {
+        return (ApiError) response.getBody();
+    }
+
     @Test
     void register_savesNewUser_andReturnsAToken() {
         when(userRepository.findByEmail("new@example.com")).thenReturn(Optional.empty());
 
-        ResponseEntity<AuthResponse> response = controller.register(new AuthRequest("new@example.com", "password123"));
+        ResponseEntity<?> response = controller.register(new AuthRequest("new@example.com", "password123"));
 
         assertEquals(200, response.getStatusCode().value());
-        assertNotNull(response.getBody().token());
-        assertEquals("new@example.com", jwtService.extractEmail(response.getBody().token()));
-        assertFalse(jwtService.isRefreshToken(response.getBody().token()));
-        assertNotNull(response.getBody().refreshToken());
-        assertTrue(jwtService.isRefreshToken(response.getBody().refreshToken()));
+        assertNotNull(authBody(response).token());
+        assertEquals("new@example.com", jwtService.extractEmail(authBody(response).token()));
+        assertFalse(jwtService.isRefreshToken(authBody(response).token()));
+        assertNotNull(authBody(response).refreshToken());
+        assertTrue(jwtService.isRefreshToken(authBody(response).refreshToken()));
     }
 
     @Test
     void register_returns409_whenEmailAlreadyTaken() {
         when(userRepository.findByEmail("taken@example.com")).thenReturn(Optional.of(new User()));
 
-        ResponseEntity<AuthResponse> response = controller.register(new AuthRequest("taken@example.com", "password123"));
+        ResponseEntity<?> response = controller.register(new AuthRequest("taken@example.com", "password123"));
 
         assertEquals(409, response.getStatusCode().value());
+        assertEquals("CONFLICT", errorBody(response).error());
     }
 
     @Test
@@ -74,28 +87,29 @@ class AuthControllerTest {
         doThrow(new DataIntegrityViolationException("duplicate key value violates unique constraint"))
                 .when(userRepository).save(any());
 
-        ResponseEntity<AuthResponse> response = controller.register(new AuthRequest("racing@example.com", "password123"));
+        ResponseEntity<?> response = controller.register(new AuthRequest("racing@example.com", "password123"));
 
         assertEquals(409, response.getStatusCode().value());
     }
 
     @Test
     void register_returns400_whenPasswordIsTooShort() {
-        ResponseEntity<AuthResponse> response = controller.register(new AuthRequest("new@example.com", "abc123"));
+        ResponseEntity<?> response = controller.register(new AuthRequest("new@example.com", "abc123"));
 
         assertEquals(400, response.getStatusCode().value());
+        assertEquals("BAD_REQUEST", errorBody(response).error());
     }
 
     @Test
     void register_returns400_whenPasswordHasNoDigit() {
-        ResponseEntity<AuthResponse> response = controller.register(new AuthRequest("new@example.com", "allletters"));
+        ResponseEntity<?> response = controller.register(new AuthRequest("new@example.com", "allletters"));
 
         assertEquals(400, response.getStatusCode().value());
     }
 
     @Test
     void register_returns400_whenPasswordHasNoLetter() {
-        ResponseEntity<AuthResponse> response = controller.register(new AuthRequest("new@example.com", "12345678"));
+        ResponseEntity<?> response = controller.register(new AuthRequest("new@example.com", "12345678"));
 
         assertEquals(400, response.getStatusCode().value());
     }
@@ -105,7 +119,7 @@ class AuthControllerTest {
         // A weak password should be rejected as a 400 regardless of whether the email is
         // available - malformed input takes precedence over a business-logic conflict, and this
         // also proves the check happens without ever needing to hit the repository at all.
-        ResponseEntity<AuthResponse> response = controller.register(new AuthRequest("taken@example.com", "weak"));
+        ResponseEntity<?> response = controller.register(new AuthRequest("taken@example.com", "weak"));
 
         assertEquals(400, response.getStatusCode().value());
         verifyNoInteractions(userRepository);
@@ -118,12 +132,12 @@ class AuthControllerTest {
         user.setPasswordHash(passwordEncoder.encode("correct-password"));
         when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
 
-        ResponseEntity<AuthResponse> response = controller.login(
+        ResponseEntity<?> response = controller.login(
                 new AuthRequest("owner@example.com", "correct-password"), requestFrom("10.0.0.1"));
 
         assertEquals(200, response.getStatusCode().value());
-        assertEquals("owner@example.com", jwtService.extractEmail(response.getBody().token()));
-        assertTrue(jwtService.isRefreshToken(response.getBody().refreshToken()));
+        assertEquals("owner@example.com", jwtService.extractEmail(authBody(response).token()));
+        assertTrue(jwtService.isRefreshToken(authBody(response).refreshToken()));
     }
 
     @Test
@@ -133,17 +147,18 @@ class AuthControllerTest {
         user.setPasswordHash(passwordEncoder.encode("correct-password"));
         when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
 
-        ResponseEntity<AuthResponse> response = controller.login(
+        ResponseEntity<?> response = controller.login(
                 new AuthRequest("owner@example.com", "wrong-password"), requestFrom("10.0.0.2"));
 
         assertEquals(401, response.getStatusCode().value());
+        assertEquals("UNAUTHORIZED", errorBody(response).error());
     }
 
     @Test
     void login_returns401_whenEmailDoesNotExist() {
         when(userRepository.findByEmail(any())).thenReturn(Optional.empty());
 
-        ResponseEntity<AuthResponse> response = controller.login(
+        ResponseEntity<?> response = controller.login(
                 new AuthRequest("nobody@example.com", "anything"), requestFrom("10.0.0.3"));
 
         assertEquals(401, response.getStatusCode().value());
@@ -158,13 +173,14 @@ class AuthControllerTest {
         MockHttpServletRequest request = requestFrom("10.0.0.4");
 
         for (int i = 0; i < 5; i++) {
-            ResponseEntity<AuthResponse> response = controller.login(new AuthRequest("victim@example.com", "guess" + i), request);
+            ResponseEntity<?> response = controller.login(new AuthRequest("victim@example.com", "guess" + i), request);
             assertEquals(401, response.getStatusCode().value());
         }
 
-        ResponseEntity<AuthResponse> sixthAttempt = controller.login(new AuthRequest("victim@example.com", "guess5"), request);
+        ResponseEntity<?> sixthAttempt = controller.login(new AuthRequest("victim@example.com", "guess5"), request);
 
         assertEquals(429, sixthAttempt.getStatusCode().value());
+        assertEquals("TOO_MANY_REQUESTS", errorBody(sixthAttempt).error());
     }
 
     @Test
@@ -177,7 +193,7 @@ class AuthControllerTest {
             controller.login(new AuthRequest("victim@example.com", "guess" + i), requestFrom("10.0.0.5"));
         }
 
-        ResponseEntity<AuthResponse> response = controller.login(
+        ResponseEntity<?> response = controller.login(
                 new AuthRequest("victim@example.com", "another-guess"), requestFrom("10.0.0.6"));
 
         assertEquals(401, response.getStatusCode().value());
@@ -193,13 +209,13 @@ class AuthControllerTest {
 
         controller.login(new AuthRequest("owner@example.com", "wrong-password"), request);
         controller.login(new AuthRequest("owner@example.com", "wrong-password"), request);
-        ResponseEntity<AuthResponse> successResponse = controller.login(new AuthRequest("owner@example.com", "correct-password"), request);
+        ResponseEntity<?> successResponse = controller.login(new AuthRequest("owner@example.com", "correct-password"), request);
         assertEquals(200, successResponse.getStatusCode().value());
 
         // Failure count should be back to zero after the success above - four more wrong
         // attempts (fewer than the limit) should still be plain 401s, not 429.
         for (int i = 0; i < 4; i++) {
-            ResponseEntity<AuthResponse> response = controller.login(new AuthRequest("owner@example.com", "wrong-again"), request);
+            ResponseEntity<?> response = controller.login(new AuthRequest("owner@example.com", "wrong-again"), request);
             assertEquals(401, response.getStatusCode().value());
         }
     }
@@ -216,7 +232,7 @@ class AuthControllerTest {
     void logout_revokesTheToken() {
         String token = jwtService.generateAccessToken("owner@example.com");
 
-        ResponseEntity<Void> response = controller.logout(requestWithAuthHeader("Bearer " + token));
+        ResponseEntity<?> response = controller.logout(requestWithAuthHeader("Bearer " + token));
 
         assertEquals(200, response.getStatusCode().value());
         assertTrue(tokenBlocklist.isRevoked(token));
@@ -224,14 +240,15 @@ class AuthControllerTest {
 
     @Test
     void logout_returns400_whenNoAuthorizationHeaderPresent() {
-        ResponseEntity<Void> response = controller.logout(requestWithAuthHeader(null));
+        ResponseEntity<?> response = controller.logout(requestWithAuthHeader(null));
 
         assertEquals(400, response.getStatusCode().value());
+        assertEquals("BAD_REQUEST", errorBody(response).error());
     }
 
     @Test
     void logout_returns400_whenHeaderDoesNotStartWithBearer() {
-        ResponseEntity<Void> response = controller.logout(requestWithAuthHeader("Basic somecreds"));
+        ResponseEntity<?> response = controller.logout(requestWithAuthHeader("Basic somecreds"));
 
         assertEquals(400, response.getStatusCode().value());
     }
@@ -243,12 +260,12 @@ class AuthControllerTest {
         when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
         String refreshToken = jwtService.generateRefreshToken("owner@example.com");
 
-        ResponseEntity<AuthResponse> response = controller.refresh(requestWithAuthHeader("Bearer " + refreshToken));
+        ResponseEntity<?> response = controller.refresh(requestWithAuthHeader("Bearer " + refreshToken));
 
         assertEquals(200, response.getStatusCode().value());
-        assertEquals("owner@example.com", jwtService.extractEmail(response.getBody().token()));
-        assertFalse(jwtService.isRefreshToken(response.getBody().token()));
-        assertTrue(jwtService.isRefreshToken(response.getBody().refreshToken()));
+        assertEquals("owner@example.com", jwtService.extractEmail(authBody(response).token()));
+        assertFalse(jwtService.isRefreshToken(authBody(response).token()));
+        assertTrue(jwtService.isRefreshToken(authBody(response).refreshToken()));
     }
 
     @Test
@@ -262,9 +279,10 @@ class AuthControllerTest {
         String refreshToken = jwtService.generateRefreshToken("owner@example.com");
 
         controller.refresh(requestWithAuthHeader("Bearer " + refreshToken));
-        ResponseEntity<AuthResponse> secondAttempt = controller.refresh(requestWithAuthHeader("Bearer " + refreshToken));
+        ResponseEntity<?> secondAttempt = controller.refresh(requestWithAuthHeader("Bearer " + refreshToken));
 
         assertEquals(401, secondAttempt.getStatusCode().value());
+        assertEquals("UNAUTHORIZED", errorBody(secondAttempt).error());
     }
 
     @Test
@@ -276,7 +294,7 @@ class AuthControllerTest {
         when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
         String accessToken = jwtService.generateAccessToken("owner@example.com");
 
-        ResponseEntity<AuthResponse> response = controller.refresh(requestWithAuthHeader("Bearer " + accessToken));
+        ResponseEntity<?> response = controller.refresh(requestWithAuthHeader("Bearer " + accessToken));
 
         assertEquals(401, response.getStatusCode().value());
     }
@@ -286,14 +304,14 @@ class AuthControllerTest {
         when(userRepository.findByEmail("deleted@example.com")).thenReturn(Optional.empty());
         String refreshToken = jwtService.generateRefreshToken("deleted@example.com");
 
-        ResponseEntity<AuthResponse> response = controller.refresh(requestWithAuthHeader("Bearer " + refreshToken));
+        ResponseEntity<?> response = controller.refresh(requestWithAuthHeader("Bearer " + refreshToken));
 
         assertEquals(401, response.getStatusCode().value());
     }
 
     @Test
     void refresh_returns400_whenNoAuthorizationHeaderPresent() {
-        ResponseEntity<AuthResponse> response = controller.refresh(requestWithAuthHeader(null));
+        ResponseEntity<?> response = controller.refresh(requestWithAuthHeader(null));
 
         assertEquals(400, response.getStatusCode().value());
     }
