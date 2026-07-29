@@ -20,10 +20,18 @@ import java.time.LocalDate;
 // value is left untouched on update) rather than forcing every client - including the current
 // frontend, which doesn't send this field yet - to always supply it. @Min/@Max still apply when
 // a value IS present, since Bean Validation treats a null as "not provided" and skips them.
+//
+// incorporationDate (issue #31) is optional too, for the same reason - no client sends it yet.
+// Unlike leadTimeDays it has no Bean Validation annotation at all: the rule it enables (a
+// first-year financialYearEnd can't be more than 18 months after it, per the Companies Act) is
+// a cross-field check, which Bean Validation annotations on a single field can't express -
+// BusinessController checks it explicitly instead, same pattern as the password-strength check
+// on AuthController.register.
 public record BusinessRequest(
         @NotBlank String name,
         @NotNull LocalDate financialYearEnd,
         boolean gstRegistered,
-        @Min(1) @Max(90) Integer leadTimeDays
+        @Min(1) @Max(90) Integer leadTimeDays,
+        LocalDate incorporationDate
 ) {
 }

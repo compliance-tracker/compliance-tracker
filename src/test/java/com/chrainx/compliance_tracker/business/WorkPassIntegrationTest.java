@@ -48,7 +48,7 @@ class WorkPassIntegrationTest {
     }
 
     private Long createBusiness(HttpHeaders headers) {
-        BusinessRequest request = new BusinessRequest("WorkPass E2E Test Co", LocalDate.of(2026, 12, 31), false, null);
+        BusinessRequest request = new BusinessRequest("WorkPass E2E Test Co", LocalDate.of(2026, 12, 31), false, null, null);
 
         return restTemplate.postForEntity("/api/businesses", new HttpEntity<>(request, headers), BusinessResponse.class)
                 .getBody().id();

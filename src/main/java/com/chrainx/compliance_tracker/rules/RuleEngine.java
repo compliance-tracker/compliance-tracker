@@ -77,6 +77,26 @@ public class RuleEngine {
         return deadline;
     }
 
+    // Companies Act 1967 s.198 (+ ACRA's own FYE guidance, which cites the same 18-month
+    // threshold for changing an FYE): a company's very first financial year - the one starting
+    // at incorporation - may run up to 18 months before it needs ACRA's special approval; every
+    // subsequent financial year is capped at 12 months instead (enforced implicitly here by
+    // nextAcraDeadline's own year-at-a-time recurrence, not by this method).
+    //
+    // Deliberately a literal date subtraction, not a "nearest occurrence of this month/day"
+    // search - an earlier version tried that (to avoid a *different* false-positive, see below)
+    // and it was actually wrong: the nearest occurrence of any month/day is, by definition,
+    // always within about 12 months of any starting date, so a check built that way could never
+    // detect a genuine violation at all - caught by this method's own test suite failing, not
+    // assumed. financialYearEnd here has to be read as the literal first FYE date being
+    // declared (which is exactly what it is at the point this is actually called -
+    // BusinessController.createBusiness only, a brand new business with no prior cycles yet, not
+    // updateBusiness - see that method's own comment for why re-checking on every future edit
+    // would be the wrong call).
+    public boolean firstFinancialYearExceedsAcraLimit(LocalDate incorporationDate, LocalDate financialYearEnd) {
+        return financialYearEnd.isAfter(incorporationDate.plusMonths(18));
+    }
+
     // Finds the end date of the calendar quarter (Jan-Mar, Apr-Jun, Jul-Sep, Oct-Dec) that
     // referenceDate falls in. E.g. Feb 15 -> Q1 -> March 31.
     private LocalDate calendarQuarterEnd(LocalDate referenceDate) {
