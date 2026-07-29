@@ -43,7 +43,7 @@ a single directory before this split (issue #90):
 | `error` | `ApiError`, `GlobalExceptionHandler` — the consistent structured error response format (issue #47), also cross-cutting |
 | `logging` | `CorrelationIdFilter`, `CorrelationIdSupport` (issue #51) — request/scheduled-run correlation IDs, see "Request correlation IDs" below |
 | `notifications` | `NotificationSender` interface (reminders), `EmailNotificationSender`, `LoggingNotificationSender`; `AuthEmailSender` interface (password reset #37, email verification #36), `EmailAuthEmailSender`, `LoggingAuthEmailSender` |
-| `queue` | `SqsDispatchService`, `ReminderWorkerService`, `ReminderMessage` |
+| `queue` | `SqsDispatchService`, `ReminderWorkerService`, `ReminderMessage`, `DlqMonitorService` (issue #18) |
 | `rules` | Pure rules-engine logic (`RuleEngine`, `Deadline`, `ObligationType`) — predates this split, was already its own package |
 | *(root)* | `ComplianceTrackerApplication` (entry point), `HelloController` (smoke test) |
 
@@ -282,6 +282,24 @@ confirming the message lands in the DLQ) rather than covered by an automated tes
 reproducing it end-to-end would mean waiting out real SQS visibility timeouts or adding
 test-only timing hooks not worth the complexity here.
 
+**`DlqMonitorService`** (issue #18) closes the gap that redrive policy left open: once a message
+actually landed in the DLQ, nothing surfaced it. Every 5 minutes (`fixedDelay = 300_000` — far
+slower than `ReminderWorkerService`'s own 30s poll, since DLQ depth only ever changes after a
+message has already failed 3 times), it checks the DLQ's `ApproximateNumberOfMessages` attribute
+and logs a `WARN` (with the current correlation ID, issue #51) if it's non-zero. Deliberately
+silent when the queue is empty — the overwhelmingly common case — so the log line stays a real
+signal, not noise an operator learns to tune out.
+
+**Deliberately does not add a new HTTP endpoint to expose this.** The app has no admin/role
+concept at all yet — every endpoint just means "authenticated as *some* user" — and DLQ contents
+span every business/user in the system, not just whichever caller happened to hit the endpoint.
+Building a real admin-auth model just to expose one read-only number would be a much bigger,
+separate scope decision than this issue asks for (see issues #65/#39, both of which would need
+the same groundwork, both still open). Log-based alerting is the honest MVP instead — a line an
+operator (or, on real AWS, a CloudWatch Logs metric filter/alarm — not set up here, this project
+isn't deployed anywhere real yet) can act on — plus `aws sqs get-queue-attributes` for manual
+inspection, the same technique already used to investigate issue #75's own queue-depth problem.
+
 ## Local development: LocalStack
 
 No AWS account is needed for local dev. [LocalStack](https://www.localstack.cloud/) emulates
@@ -416,8 +434,6 @@ the table will actually have in production.
 
 ## Planned (not built yet — see [open issues](https://github.com/compliance-tracker/compliance-tracker/issues))
 
-- **DLQ monitoring/alerting** — currently, a message that lands in the dead-letter queue is
-  silent; nothing surfaces it. Would need at minimum a way to inspect DLQ depth.
 - **Cloud deployment** — AWS ECS/Fargate + RDS, replacing local Docker Postgres; switch
   `aws.sqs.endpoint` off to use real AWS.
 - **Load testing** — real throughput/latency numbers against the deployed system.
