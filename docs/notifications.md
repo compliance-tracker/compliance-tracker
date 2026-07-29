@@ -58,3 +58,20 @@ building #17: a real email arrived with the correct sender, recipient, subject, 
 
 If either container was already created in a previous session, `docker start compliance-mailpit`
 instead of `docker run` — otherwise `docker run` will fail with a "name already in use" error.
+
+## Checking the active channel over the API (issue #114)
+
+`GET /api/notifications/status` (auth required, like the rest of the API) reports which channel
+is actually active right now, without needing shell/SSH access to read `application.properties`
+or the process's env vars directly:
+
+```json
+{ "channel": "logging" }
+```
+```json
+{ "channel": "email", "fromAddress": "reminders@yourdomain.com" }
+```
+
+Deliberately just current config, not a "recently sent" history — that would need persisting a
+send log somewhere, a bigger feature not requested here. Built for the frontend's Notifications
+status page (frontend #39/#63), the one remaining piece of its Harbour Ledger redesign.
