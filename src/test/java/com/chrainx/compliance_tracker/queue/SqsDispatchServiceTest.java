@@ -15,7 +15,6 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 class SqsDispatchServiceTest {
@@ -40,9 +39,9 @@ class SqsDispatchServiceTest {
         record.setBusiness(business);
         record.setDueDate(LocalDate.of(2026, 8, 1));
 
-        when(deadlineSyncService.findDueSoonAndUnreminded(any(), eq(14))).thenReturn(List.of(record));
+        when(deadlineSyncService.findDueSoonAndUnreminded(any())).thenReturn(List.of(record));
 
-        int dispatched = service.dispatchDueSoonDeadlines(14);
+        int dispatched = service.dispatchDueSoonDeadlines();
 
         assertEquals(1, dispatched);
         verify(sqsClient, times(1)).sendMessage(any(SendMessageRequest.class));
@@ -52,9 +51,9 @@ class SqsDispatchServiceTest {
     void dispatchDueSoonDeadlines_sendsNoMessages_whenNothingDueSoon() {
         when(sqsClient.getQueueUrl(any(GetQueueUrlRequest.class)))
                 .thenReturn(GetQueueUrlResponse.builder().queueUrl("http://localhost:4566/000000000000/compliance-reminders").build());
-        when(deadlineSyncService.findDueSoonAndUnreminded(any(), eq(14))).thenReturn(List.of());
+        when(deadlineSyncService.findDueSoonAndUnreminded(any())).thenReturn(List.of());
 
-        int dispatched = service.dispatchDueSoonDeadlines(14);
+        int dispatched = service.dispatchDueSoonDeadlines();
 
         assertEquals(0, dispatched);
         verify(sqsClient, never()).sendMessage(any(SendMessageRequest.class));

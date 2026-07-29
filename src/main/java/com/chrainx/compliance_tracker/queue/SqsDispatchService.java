@@ -41,7 +41,7 @@ public class SqsDispatchService {
 
     // @Scheduled methods must be no-arg - Spring has no way to supply a parameter on a timer
     // trigger - so this thin wrapper is what's actually scheduled, delegating to the real
-    // (parameterized, directly testable) method below with a fixed 14-day lookahead.
+    // (directly testable) method below.
     //
     // Runs 15 minutes after DeadlineSyncService's daily sync (01:00), giving it time to finish
     // persisting any newly-computed deadlines first. Not a hard guarantee of ordering - a
@@ -49,15 +49,18 @@ public class SqsDispatchService {
     // project's scope; flagged as a known limitation.
     @Scheduled(cron = "0 15 1 * * *", zone = "Asia/Singapore")
     public void scheduledDispatch() {
-        dispatchDueSoonDeadlines(14);
+        dispatchDueSoonDeadlines();
     }
 
-    public int dispatchDueSoonDeadlines(int daysAhead) {
+    // No longer takes a daysAhead parameter (issue #53) - "how far ahead counts as due soon" is
+    // now each business's own leadTimeDays, read inside findDueSoonAndUnreminded, not one value
+    // this method could apply uniformly to every record.
+    public int dispatchDueSoonDeadlines() {
         String queueUrl = sqsClient.getQueueUrl(
                 GetQueueUrlRequest.builder().queueName(queueName).build()
         ).queueUrl();
 
-        List<DeadlineRecord> dueSoon = deadlineSyncService.findDueSoonAndUnreminded(LocalDate.now(RuleEngine.SINGAPORE_TIME_ZONE), daysAhead);
+        List<DeadlineRecord> dueSoon = deadlineSyncService.findDueSoonAndUnreminded(LocalDate.now(RuleEngine.SINGAPORE_TIME_ZONE));
 
         for (DeadlineRecord record : dueSoon) {
             // Jackson 3.x (bundled by Spring Boot 4.1) made writeValueAsString throw an

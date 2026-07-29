@@ -67,7 +67,7 @@ class ReminderWorkerIntegrationTest {
         businessRepository.save(business);
 
         deadlineSyncService.syncDeadlines();
-        sqsDispatchService.dispatchDueSoonDeadlines(1);
+        sqsDispatchService.dispatchDueSoonDeadlines();
         reminderWorkerService.pollAndProcess();
 
         Optional<DeadlineRecord> record = deadlineRecordRepository

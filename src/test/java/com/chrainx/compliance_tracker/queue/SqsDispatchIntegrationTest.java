@@ -13,10 +13,14 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.GetQueueUrlRequest;
+import software.amazon.awssdk.services.sqs.model.Message;
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageResponse;
+import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -48,6 +52,9 @@ class SqsDispatchIntegrationTest {
     @Autowired
     private SqsClient sqsClient;
 
+    @Autowired
+    private ObjectMapper objectMapper;
+
     @Value("${aws.sqs.queue-name}")
     private String queueName;
 
@@ -69,7 +76,7 @@ class SqsDispatchIntegrationTest {
         businessRepository.save(business);
 
         deadlineSyncService.syncDeadlines();
-        int dispatched = sqsDispatchService.dispatchDueSoonDeadlines(1);
+        int dispatched = sqsDispatchService.dispatchDueSoonDeadlines();
         assertTrue(dispatched >= 1);
 
         String queueUrl = sqsClient.getQueueUrl(
@@ -88,5 +95,58 @@ class SqsDispatchIntegrationTest {
         );
 
         assertFalse(response.messages().isEmpty());
+    }
+
+    // Real, end-to-end proof of issue #53: two businesses with the exact same due date but
+    // different leadTimeDays get genuinely different dispatch outcomes, not just that
+    // dispatchDueSoonDeadlines runs without error.
+    @Test
+    void businessesWithDifferentLeadTimeDays_getDispatchedDifferently_forTheSameDueDate() {
+        // Both due in 10 days - within reach of a 30-day lead time, beyond a 1-day one.
+        LocalDate financialYearEndForTenDaysOut =
+                LocalDate.now(RuleEngine.SINGAPORE_TIME_ZONE).plusDays(10).minusMonths(7);
+
+        Business shortLeadBusiness = createBusiness("Short Lead Co", financialYearEndForTenDaysOut, 1);
+        Business longLeadBusiness = createBusiness("Long Lead Co", financialYearEndForTenDaysOut, 30);
+
+        deadlineSyncService.syncDeadlines();
+        sqsDispatchService.dispatchDueSoonDeadlines();
+
+        String queueUrl = sqsClient.getQueueUrl(
+                GetQueueUrlRequest.builder().queueName(queueName).build()
+        ).queueUrl();
+
+        List<Long> dispatchedBusinessIds = new ArrayList<>();
+        // Drains a few receive calls (not just one) - other tests/leftover messages can share
+        // this same LocalStack queue (see issue #75's own notes on this), and short polling
+        // doesn't guarantee returning every available message on a single call either.
+        for (int i = 0; i < 3; i++) {
+            ReceiveMessageResponse response = sqsClient.receiveMessage(
+                    ReceiveMessageRequest.builder().queueUrl(queueUrl).maxNumberOfMessages(10).waitTimeSeconds(2).build()
+            );
+            for (Message message : response.messages()) {
+                dispatchedBusinessIds.add(objectMapper.readValue(message.body(), ReminderMessage.class).businessId());
+            }
+        }
+
+        assertTrue(dispatchedBusinessIds.contains(longLeadBusiness.getId()),
+                "the 30-day-lead business's due-in-10-days deadline should have been dispatched");
+        assertFalse(dispatchedBusinessIds.contains(shortLeadBusiness.getId()),
+                "the 1-day-lead business's due-in-10-days deadline should NOT have been dispatched yet");
+    }
+
+    private Business createBusiness(String name, LocalDate financialYearEnd, int leadTimeDays) {
+        User owner = new User();
+        owner.setEmail("sqs-dispatch-lead-time-test-" + System.nanoTime() + "@example.com");
+        owner.setPasswordHash("unused-in-this-test");
+        userRepository.save(owner);
+
+        Business business = new Business();
+        business.setName(name);
+        business.setFinancialYearEnd(financialYearEnd);
+        business.setGstRegistered(false);
+        business.setLeadTimeDays(leadTimeDays);
+        business.setOwner(owner);
+        return businessRepository.save(business);
     }
 }

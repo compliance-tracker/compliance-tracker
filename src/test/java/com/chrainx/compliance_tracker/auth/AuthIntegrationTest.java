@@ -100,7 +100,7 @@ class AuthIntegrationTest {
 
         com.chrainx.compliance_tracker.business.BusinessRequest newBusiness =
                 new com.chrainx.compliance_tracker.business.BusinessRequest(
-                        "E2E Auth Test Co", java.time.LocalDate.of(2026, 12, 31), false);
+                        "E2E Auth Test Co", java.time.LocalDate.of(2026, 12, 31), false, null);
 
         ResponseEntity<com.chrainx.compliance_tracker.business.BusinessResponse> createResponse = restTemplate.postForEntity(
                 "/api/businesses", new HttpEntity<>(newBusiness, headers),
@@ -147,7 +147,7 @@ class AuthIntegrationTest {
 
         com.chrainx.compliance_tracker.business.BusinessRequest businessA =
                 new com.chrainx.compliance_tracker.business.BusinessRequest(
-                        "User A's Real Business", java.time.LocalDate.of(2026, 12, 31), false);
+                        "User A's Real Business", java.time.LocalDate.of(2026, 12, 31), false, null);
 
         ResponseEntity<com.chrainx.compliance_tracker.business.BusinessResponse> createAResponse = restTemplate.postForEntity(
                 "/api/businesses", new HttpEntity<>(businessA, headersA),

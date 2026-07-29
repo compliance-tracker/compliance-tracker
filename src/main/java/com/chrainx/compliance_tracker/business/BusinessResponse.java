@@ -7,10 +7,11 @@ import java.time.LocalDate;
 // definition, not something that has to be remembered every time a field is added to the
 // entity. This already caused one near-miss: Business.owner needed @JsonIgnore or it would have
 // serialized a whole User - including their password hash - straight into every response.
-public record BusinessResponse(Long id, String name, LocalDate financialYearEnd, boolean gstRegistered) {
+public record BusinessResponse(
+        Long id, String name, LocalDate financialYearEnd, boolean gstRegistered, int leadTimeDays) {
 
     public static BusinessResponse from(Business business) {
-        return new BusinessResponse(
-                business.getId(), business.getName(), business.getFinancialYearEnd(), business.isGstRegistered());
+        return new BusinessResponse(business.getId(), business.getName(), business.getFinancialYearEnd(),
+                business.isGstRegistered(), business.getLeadTimeDays());
     }
 }

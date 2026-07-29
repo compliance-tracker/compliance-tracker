@@ -59,7 +59,7 @@ class BusinessIntegrationTest {
     }
 
     private Long createBusiness(HttpHeaders headers, String name) {
-        BusinessRequest request = new BusinessRequest(name, LocalDate.of(2026, 12, 31), false);
+        BusinessRequest request = new BusinessRequest(name, LocalDate.of(2026, 12, 31), false, null);
 
         return restTemplate.postForEntity("/api/businesses", new HttpEntity<>(request, headers), BusinessResponse.class)
                 .getBody().id();
@@ -80,7 +80,7 @@ class BusinessIntegrationTest {
         HttpHeaders headers = authHeaders(registerAndGetToken());
         Long businessId = createBusiness(headers, "Original Name");
 
-        BusinessRequest updates = new BusinessRequest("Corrected Name", LocalDate.of(2027, 3, 31), true);
+        BusinessRequest updates = new BusinessRequest("Corrected Name", LocalDate.of(2027, 3, 31), true, null);
 
         ResponseEntity<BusinessResponse> updateResponse = restTemplate.exchange(
                 "/api/businesses/" + businessId, HttpMethod.PUT, new HttpEntity<>(updates, headers), BusinessResponse.class);
@@ -101,7 +101,7 @@ class BusinessIntegrationTest {
 
         HttpHeaders headersB = authHeaders(registerAndGetToken());
 
-        BusinessRequest updates = new BusinessRequest("Hijacked Name", LocalDate.of(2027, 3, 31), true);
+        BusinessRequest updates = new BusinessRequest("Hijacked Name", LocalDate.of(2027, 3, 31), true, null);
 
         ResponseEntity<String> response = restTemplate.exchange(
                 "/api/businesses/" + businessAId, HttpMethod.PUT, new HttpEntity<>(updates, headersB), String.class);
@@ -173,7 +173,7 @@ class BusinessIntegrationTest {
     @Test
     void createBusiness_withBlankName_isRejectedWith400() {
         HttpHeaders headers = authHeaders(registerAndGetToken());
-        BusinessRequest request = new BusinessRequest("", LocalDate.of(2026, 12, 31), false);
+        BusinessRequest request = new BusinessRequest("", LocalDate.of(2026, 12, 31), false, null);
 
         ResponseEntity<String> response = restTemplate.postForEntity(
                 "/api/businesses", new HttpEntity<>(request, headers), String.class);
@@ -189,7 +189,7 @@ class BusinessIntegrationTest {
         // handler produces the same ApiError shape as every controller's own deliberate error
         // responses, not Spring Boot's default (much more verbose) validation error body.
         HttpHeaders headers = authHeaders(registerAndGetToken());
-        BusinessRequest request = new BusinessRequest("", LocalDate.of(2026, 12, 31), false);
+        BusinessRequest request = new BusinessRequest("", LocalDate.of(2026, 12, 31), false, null);
 
         ResponseEntity<ApiError> response = restTemplate.postForEntity(
                 "/api/businesses", new HttpEntity<>(request, headers), ApiError.class);
@@ -202,10 +202,88 @@ class BusinessIntegrationTest {
     @Test
     void createBusiness_withNullFinancialYearEnd_isRejectedWith400() {
         HttpHeaders headers = authHeaders(registerAndGetToken());
-        BusinessRequest request = new BusinessRequest("Valid Name", null, false);
+        BusinessRequest request = new BusinessRequest("Valid Name", null, false, null);
 
         ResponseEntity<String> response = restTemplate.postForEntity(
                 "/api/businesses", new HttpEntity<>(request, headers), String.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    }
+
+    // leadTimeDays (issue #53) - real HTTP, since @Valid only runs during Spring MVC's own
+    // request-body binding (same reasoning as the blank-name/null-FYE tests above).
+
+    @Test
+    void createBusiness_omittingLeadTimeDays_defaultsItTo14() {
+        HttpHeaders headers = authHeaders(registerAndGetToken());
+        BusinessRequest request = new BusinessRequest("Lead Time Default Co", LocalDate.of(2026, 12, 31), false, null);
+
+        ResponseEntity<BusinessResponse> response = restTemplate.postForEntity(
+                "/api/businesses", new HttpEntity<>(request, headers), BusinessResponse.class);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals(14, response.getBody().leadTimeDays());
+    }
+
+    @Test
+    void createBusiness_withAGivenLeadTimeDays_usesIt() {
+        HttpHeaders headers = authHeaders(registerAndGetToken());
+        BusinessRequest request = new BusinessRequest("Lead Time Custom Co", LocalDate.of(2026, 12, 31), false, 30);
+
+        ResponseEntity<BusinessResponse> response = restTemplate.postForEntity(
+                "/api/businesses", new HttpEntity<>(request, headers), BusinessResponse.class);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertEquals(30, response.getBody().leadTimeDays());
+    }
+
+    @Test
+    void createBusiness_withLeadTimeDaysBelowOne_isRejectedWith400() {
+        HttpHeaders headers = authHeaders(registerAndGetToken());
+        BusinessRequest request = new BusinessRequest("Lead Time Too Low Co", LocalDate.of(2026, 12, 31), false, 0);
+
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                "/api/businesses", new HttpEntity<>(request, headers), String.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    }
+
+    @Test
+    void createBusiness_withLeadTimeDaysAbove90_isRejectedWith400() {
+        HttpHeaders headers = authHeaders(registerAndGetToken());
+        BusinessRequest request = new BusinessRequest("Lead Time Too High Co", LocalDate.of(2026, 12, 31), false, 91);
+
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                "/api/businesses", new HttpEntity<>(request, headers), String.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    }
+
+    @Test
+    void updateBusiness_omittingLeadTimeDays_leavesItUnchanged() {
+        HttpHeaders headers = authHeaders(registerAndGetToken());
+        BusinessRequest createRequest = new BusinessRequest("Lead Time Preserve Co", LocalDate.of(2026, 12, 31), false, 45);
+        Long businessId = restTemplate.postForEntity(
+                "/api/businesses", new HttpEntity<>(createRequest, headers), BusinessResponse.class).getBody().id();
+
+        BusinessRequest updateRequest = new BusinessRequest("Renamed Co", LocalDate.of(2027, 3, 31), true, null);
+        ResponseEntity<BusinessResponse> updateResponse = restTemplate.exchange(
+                "/api/businesses/" + businessId, org.springframework.http.HttpMethod.PUT,
+                new HttpEntity<>(updateRequest, headers), BusinessResponse.class);
+
+        assertEquals(HttpStatus.OK, updateResponse.getStatusCode());
+        assertEquals(45, updateResponse.getBody().leadTimeDays());
+    }
+
+    @Test
+    void updateBusiness_withLeadTimeDaysBelowOne_isRejectedWith400() {
+        HttpHeaders headers = authHeaders(registerAndGetToken());
+        Long businessId = createBusiness(headers, "Lead Time Update Reject Co");
+
+        BusinessRequest updateRequest = new BusinessRequest("Lead Time Update Reject Co", LocalDate.of(2026, 12, 31), false, 0);
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/businesses/" + businessId, org.springframework.http.HttpMethod.PUT,
+                new HttpEntity<>(updateRequest, headers), String.class);
 
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
     }
@@ -215,7 +293,7 @@ class BusinessIntegrationTest {
         HttpHeaders headers = authHeaders(registerAndGetToken());
         Long businessId = createBusiness(headers, "Original Name");
 
-        BusinessRequest updates = new BusinessRequest("", LocalDate.of(2027, 3, 31), false);
+        BusinessRequest updates = new BusinessRequest("", LocalDate.of(2027, 3, 31), false, null);
 
         ResponseEntity<String> response = restTemplate.exchange(
                 "/api/businesses/" + businessId, HttpMethod.PUT, new HttpEntity<>(updates, headers), String.class);
@@ -232,7 +310,7 @@ class BusinessIntegrationTest {
         // The default, unchanged behavior - confirms opting into the feature never accidentally
         // becomes the default for callers who don't send the header at all.
         HttpHeaders headers = authHeaders(registerAndGetToken());
-        BusinessRequest request = new BusinessRequest("Repeatable Co", LocalDate.of(2026, 12, 31), false);
+        BusinessRequest request = new BusinessRequest("Repeatable Co", LocalDate.of(2026, 12, 31), false, null);
 
         Long firstId = restTemplate.postForEntity("/api/businesses", new HttpEntity<>(request, headers), BusinessResponse.class)
                 .getBody().id();
@@ -246,7 +324,7 @@ class BusinessIntegrationTest {
     void createBusiness_withTheSameIdempotencyKeyTwice_returnsTheSameBusiness_notADuplicate() {
         HttpHeaders headers = authHeaders(registerAndGetToken());
         headers.set("Idempotency-Key", "retry-key-" + System.nanoTime());
-        BusinessRequest request = new BusinessRequest("Retried Co", LocalDate.of(2026, 12, 31), false);
+        BusinessRequest request = new BusinessRequest("Retried Co", LocalDate.of(2026, 12, 31), false, null);
         HttpEntity<BusinessRequest> entity = new HttpEntity<>(request, headers);
 
         Long firstId = restTemplate.postForEntity("/api/businesses", entity, BusinessResponse.class).getBody().id();
@@ -270,7 +348,7 @@ class BusinessIntegrationTest {
         // deleted rather than left behind as an orphaned duplicate.
         HttpHeaders headers = authHeaders(registerAndGetToken());
         headers.set("Idempotency-Key", "concurrent-key-" + System.nanoTime());
-        BusinessRequest request = new BusinessRequest("Race Co", LocalDate.of(2026, 12, 31), false);
+        BusinessRequest request = new BusinessRequest("Race Co", LocalDate.of(2026, 12, 31), false, null);
         HttpEntity<BusinessRequest> entity = new HttpEntity<>(request, headers);
 
         ExecutorService executor = Executors.newFixedThreadPool(2);

@@ -72,6 +72,10 @@ public class BusinessController {
         business.setName(request.name());
         business.setFinancialYearEnd(request.financialYearEnd());
         business.setGstRegistered(request.gstRegistered());
+        // leadTimeDays (issue #53) is optional on the request - default to 14 (the old hardcoded
+        // behavior) when the client doesn't send one, same idiom as Business.leadTimeDays' own
+        // Java-side default.
+        business.setLeadTimeDays(request.leadTimeDays() != null ? request.leadTimeDays() : 14);
         business.setOwner(currentUser);
         business = businessRepository.save(business);
 
@@ -153,6 +157,13 @@ public class BusinessController {
         business.setName(request.name());
         business.setFinancialYearEnd(request.financialYearEnd());
         business.setGstRegistered(request.gstRegistered());
+        // Unlike createBusiness's default-to-14, an omitted leadTimeDays here leaves the
+        // existing value untouched rather than resetting it - the current frontend doesn't send
+        // this field yet, and a PUT from it must not silently wipe out a lead time the user
+        // previously customized through some other client (e.g. a direct API call).
+        if (request.leadTimeDays() != null) {
+            business.setLeadTimeDays(request.leadTimeDays());
+        }
 
         return ResponseEntity.ok(BusinessResponse.from(businessRepository.save(business)));
     }
