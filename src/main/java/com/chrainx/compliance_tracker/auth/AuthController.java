@@ -127,6 +127,17 @@ public class AuthController {
             return ResponseEntity.status(401).body(new ApiError("UNAUTHORIZED", "Incorrect email or password."));
         }
 
+        // Issue #120: register still auto-logs a new account in immediately (unchanged - the
+        // frontend's registration flow expects that), but login now requires a *later* sign-in to
+        // have verified its email first. Deliberately not folded into the block above: the
+        // credentials genuinely are correct here, so this isn't the same "could be enumerating
+        // emails" concern - a distinct status/code communicates "you're you, but not verified yet"
+        // rather than "wrong email or password". Not counted as a rate-limiter failure either -
+        // that mechanism exists for brute-forcing guesses, not this.
+        if (!user.isEmailVerified()) {
+            return ResponseEntity.status(403).body(new ApiError("FORBIDDEN", "Please verify your email before logging in."));
+        }
+
         loginRateLimiter.recordSuccess(clientIp);
         return ResponseEntity.ok(new AuthResponse(
                 jwtService.generateAccessToken(user.getEmail()), jwtService.generateRefreshToken(user.getEmail())));
@@ -303,6 +314,33 @@ public class AuthController {
         User user = userRepository.findById(verificationToken.get().getUserId()).orElseThrow();
         user.setEmailVerified(true);
         userRepository.save(user);
+
+        return ResponseEntity.ok().build();
+    }
+
+    // Issue #120: login now requires a verified email, but the original verification token is
+    // single-use and only valid for 7 days (auth.email-verification-expiration-ms) - without this,
+    // anyone whose token expired, or whose original email never arrived, would be permanently
+    // locked out with no way back in. Same enumeration-avoidance shape as forgotPassword above
+    // (always 200, regardless of whether the email exists) - and a no-op, not an error, for an
+    // email that's already verified, so this can't be used to probe verification status either.
+    @Transactional
+    @PostMapping("/resend-verification")
+    public ResponseEntity<Void> resendVerification(@RequestBody ResendVerificationRequest request) {
+        userRepository.findByEmail(request.email())
+                .filter(user -> !user.isEmailVerified())
+                .ifPresent(user -> {
+                    // Bulk delete (issue #115) - see EmailVerificationTokenRepository's Javadoc.
+                    emailVerificationTokenRepository.deleteByUserId(user.getId());
+
+                    EmailVerificationToken verificationToken = new EmailVerificationToken();
+                    verificationToken.setToken(UUID.randomUUID().toString());
+                    verificationToken.setUserId(user.getId());
+                    verificationToken.setExpiresAt(Instant.now().plusMillis(emailVerificationExpirationMs));
+                    emailVerificationTokenRepository.save(verificationToken);
+
+                    authEmailSender.sendVerificationEmail(user.getEmail(), verificationToken.getToken());
+                });
 
         return ResponseEntity.ok().build();
     }

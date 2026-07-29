@@ -140,6 +140,7 @@ class AuthControllerTest {
         User user = new User();
         user.setEmail("owner@example.com");
         user.setPasswordHash(passwordEncoder.encode("correct-password"));
+        user.setEmailVerified(true);
         when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
 
         ResponseEntity<?> response = controller.login(
@@ -214,6 +215,7 @@ class AuthControllerTest {
         User user = new User();
         user.setEmail("owner@example.com");
         user.setPasswordHash(passwordEncoder.encode("correct-password"));
+        user.setEmailVerified(true);
         when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
         MockHttpServletRequest request = requestFrom("10.0.0.7");
 
@@ -228,6 +230,85 @@ class AuthControllerTest {
             ResponseEntity<?> response = controller.login(new AuthRequest("owner@example.com", "wrong-again"), request);
             assertEquals(401, response.getStatusCode().value());
         }
+    }
+
+    @Test
+    void login_returns403_whenTheAccountsEmailIsNotVerified() {
+        // Regression test for issue #120: correct credentials, but an unverified account -
+        // deliberately a distinct status/code from the 401 "wrong email or password" case above,
+        // since these credentials genuinely are correct.
+        User user = new User();
+        user.setEmail("owner@example.com");
+        user.setPasswordHash(passwordEncoder.encode("correct-password"));
+        // emailVerified defaults to false - not set here on purpose.
+        when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
+
+        ResponseEntity<?> response = controller.login(
+                new AuthRequest("owner@example.com", "correct-password"), requestFrom("10.0.0.8"));
+
+        assertEquals(403, response.getStatusCode().value());
+        assertEquals("FORBIDDEN", errorBody(response).error());
+    }
+
+    @Test
+    void login_deniedForAnUnverifiedAccount_doesNotCountTowardsRateLimiting() {
+        // The rate limiter exists to slow down credential-guessing, not to punish a real,
+        // correctly-authenticated user for not having verified yet.
+        User user = new User();
+        user.setEmail("owner@example.com");
+        user.setPasswordHash(passwordEncoder.encode("correct-password"));
+        when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
+        MockHttpServletRequest request = requestFrom("10.0.0.9");
+
+        for (int i = 0; i < 5; i++) {
+            ResponseEntity<?> response = controller.login(new AuthRequest("owner@example.com", "correct-password"), request);
+            assertEquals(403, response.getStatusCode().value());
+        }
+
+        ResponseEntity<?> sixthAttempt = controller.login(new AuthRequest("owner@example.com", "correct-password"), request);
+        assertEquals(403, sixthAttempt.getStatusCode().value());
+    }
+
+    @Test
+    void resendVerification_forAnUnverifiedExistingEmail_generatesAndEmailsAFreshToken() {
+        User user = new User();
+        user.setId(1L);
+        user.setEmail("owner@example.com");
+        when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
+
+        ResponseEntity<Void> response = controller.resendVerification(new ResendVerificationRequest("owner@example.com"));
+
+        assertEquals(200, response.getStatusCode().value());
+        verify(emailVerificationTokenRepository).deleteByUserId(1L);
+        verify(emailVerificationTokenRepository).save(any());
+        verify(authEmailSender).sendVerificationEmail(eq("owner@example.com"), any());
+    }
+
+    @Test
+    void resendVerification_forAnAlreadyVerifiedEmail_doesNothing() {
+        // No-op, not an error - otherwise this endpoint could be used to probe whether a given
+        // email is already verified, the same enumeration concern forgotPassword avoids.
+        User user = new User();
+        user.setId(1L);
+        user.setEmail("owner@example.com");
+        user.setEmailVerified(true);
+        when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
+
+        ResponseEntity<Void> response = controller.resendVerification(new ResendVerificationRequest("owner@example.com"));
+
+        assertEquals(200, response.getStatusCode().value());
+        verifyNoInteractions(authEmailSender);
+        verify(emailVerificationTokenRepository, never()).save(any());
+    }
+
+    @Test
+    void resendVerification_forANonExistentEmail_stillReturns200_withoutEmailingAnything() {
+        when(userRepository.findByEmail("nobody@example.com")).thenReturn(Optional.empty());
+
+        ResponseEntity<Void> response = controller.resendVerification(new ResendVerificationRequest("nobody@example.com"));
+
+        assertEquals(200, response.getStatusCode().value());
+        verifyNoInteractions(authEmailSender);
     }
 
     private MockHttpServletRequest requestWithAuthHeader(String headerValue) {

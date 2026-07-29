@@ -61,6 +61,20 @@ class AuthIntegrationTest {
     @Autowired
     private UserRepository userRepository;
 
+    // Issue #120: login now requires a verified email, so any test that registers and then
+    // exercises the real /api/auth/login endpoint (not just uses register's own returned tokens)
+    // needs to actually verify first - same real-token-out-of-the-DB, real-endpoint technique
+    // already used throughout this file, not a shortcut around the feature being tested.
+    private void verifyEmail(String email) {
+        Long userId = userRepository.findByEmail(email).orElseThrow().getId();
+        String realToken = emailVerificationTokenRepository.findAll().stream()
+                .filter(t -> t.getUserId().equals(userId))
+                .reduce((first, second) -> second)
+                .orElseThrow()
+                .getToken();
+        restTemplate.postForEntity("/api/auth/verify-email", new VerifyEmailRequest(realToken), Void.class);
+    }
+
     @Test
     void unauthenticatedRequest_toBusinesses_isRejected() {
         ResponseEntity<String> response = restTemplate.getForEntity("/api/businesses", String.class);
@@ -419,14 +433,21 @@ class AuthIntegrationTest {
         // -> old password now fails, new password works.
         String email = "auth-e2e-reset-" + System.nanoTime() + "@example.com";
         restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "old-password1"), AuthResponse.class);
+        verifyEmail(email);
 
         ResponseEntity<Void> forgotResponse = restTemplate.postForEntity(
                 "/api/auth/forgot-password", new ForgotPasswordRequest(email), Void.class);
         assertEquals(HttpStatus.OK, forgotResponse.getStatusCode());
 
+        // Filtered by this test's own userId, not just "most recently inserted" across the whole
+        // table - findAll() has no guaranteed row order, and this local dev/CI Postgres
+        // accumulates rows across many test runs over a long-lived session, so an unfiltered
+        // "grab the last one" can pick up a completely different test's token. Found live: this
+        // exact test started genuinely failing once enough unrelated rows had piled up.
+        Long userId = userRepository.findByEmail(email).orElseThrow().getId();
         String realToken = passwordResetTokenRepository.findAll().stream()
-                .filter(t -> t.getUserId() != null)
-                .reduce((first, second) -> second) // most recently inserted
+                .filter(t -> t.getUserId().equals(userId))
+                .reduce((first, second) -> second) // most recently inserted, for this user
                 .orElseThrow()
                 .getToken();
 
@@ -453,6 +474,7 @@ class AuthIntegrationTest {
         String email = "auth-e2e-reset-sessions-" + System.nanoTime() + "@example.com";
         AuthResponse original = restTemplate.postForEntity(
                 "/api/auth/register", new AuthRequest(email, "old-password1"), AuthResponse.class).getBody();
+        verifyEmail(email);
 
         // A JWT's issued-at only has second precision, and tokenValidAfter's own floor to the
         // second (see JwtAuthenticationFilter.isValidForUser's comment) means a token minted in
@@ -463,8 +485,9 @@ class AuthIntegrationTest {
         Thread.sleep(1100);
 
         restTemplate.postForEntity("/api/auth/forgot-password", new ForgotPasswordRequest(email), Void.class);
+        Long resetUserId = userRepository.findByEmail(email).orElseThrow().getId();
         String realToken = passwordResetTokenRepository.findAll().stream()
-                .filter(t -> t.getUserId() != null)
+                .filter(t -> t.getUserId().equals(resetUserId))
                 .reduce((first, second) -> second)
                 .orElseThrow()
                 .getToken();
@@ -509,8 +532,9 @@ class AuthIntegrationTest {
         restTemplate.postForEntity(
                 "/api/auth/forgot-password", new ForgotPasswordRequest(email), Void.class);
 
+        Long reuseUserId = userRepository.findByEmail(email).orElseThrow().getId();
         String realToken = passwordResetTokenRepository.findAll().stream()
-                .filter(t -> t.getUserId() != null)
+                .filter(t -> t.getUserId().equals(reuseUserId))
                 .reduce((first, second) -> second)
                 .orElseThrow()
                 .getToken();
@@ -727,5 +751,69 @@ class AuthIntegrationTest {
         executor.shutdown();
 
         assertEquals(2, statusCodes.stream().filter(s -> s == 200).count());
+    }
+
+    @Test
+    void fullFlow_registerThenVerifyThenLogin_worksEndToEnd() {
+        // Real HTTP, end to end (issue #120): register -> login rejected with 403 while
+        // unverified -> verify -> login now succeeds.
+        String email = "auth-e2e-verify-then-login-" + System.nanoTime() + "@example.com";
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class);
+
+        ResponseEntity<ApiError> beforeVerify = restTemplate.postForEntity(
+                "/api/auth/login", new AuthRequest(email, "a-real-password1"), ApiError.class);
+        assertEquals(HttpStatus.FORBIDDEN, beforeVerify.getStatusCode());
+        assertEquals("FORBIDDEN", beforeVerify.getBody().error());
+
+        verifyEmail(email);
+
+        ResponseEntity<AuthResponse> afterVerify = restTemplate.postForEntity(
+                "/api/auth/login", new AuthRequest(email, "a-real-password1"), AuthResponse.class);
+        assertEquals(HttpStatus.OK, afterVerify.getStatusCode());
+    }
+
+    @Test
+    void resendVerification_letsAUserWithAnUnusableOriginalToken_stillVerifyAndLogIn() {
+        // Real HTTP, end to end (issue #120): register -> the original token gets deliberately
+        // discarded/forgotten (simulated by just never using it) -> resend-verification -> a
+        // fresh, different token arrives -> that one actually works.
+        String email = "auth-e2e-resend-" + System.nanoTime() + "@example.com";
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class);
+        Long userId = userRepository.findByEmail(email).orElseThrow().getId();
+        String originalToken = emailVerificationTokenRepository.findAll().stream()
+                .filter(t -> t.getUserId().equals(userId))
+                .reduce((first, second) -> second)
+                .orElseThrow()
+                .getToken();
+
+        ResponseEntity<Void> resendResponse = restTemplate.postForEntity(
+                "/api/auth/resend-verification", new ResendVerificationRequest(email), Void.class);
+        assertEquals(HttpStatus.OK, resendResponse.getStatusCode());
+
+        String freshToken = emailVerificationTokenRepository.findAll().stream()
+                .filter(t -> t.getUserId().equals(userId))
+                .reduce((first, second) -> second)
+                .orElseThrow()
+                .getToken();
+        assertFalse(originalToken.equals(freshToken));
+
+        ResponseEntity<Void> verifyWithFreshToken = restTemplate.postForEntity(
+                "/api/auth/verify-email", new VerifyEmailRequest(freshToken), Void.class);
+        assertEquals(HttpStatus.OK, verifyWithFreshToken.getStatusCode());
+
+        ResponseEntity<AuthResponse> loginAfterResend = restTemplate.postForEntity(
+                "/api/auth/login", new AuthRequest(email, "a-real-password1"), AuthResponse.class);
+        assertEquals(HttpStatus.OK, loginAfterResend.getStatusCode());
+    }
+
+    @Test
+    void resendVerification_forANonExistentEmail_stillReturns200() {
+        // Same enumeration-avoidance contract as forgot-password - must not reveal whether the
+        // email is registered at all.
+        ResponseEntity<Void> response = restTemplate.postForEntity(
+                "/api/auth/resend-verification", new ResendVerificationRequest("nobody-" + System.nanoTime() + "@example.com"),
+                Void.class);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
     }
 }

@@ -143,11 +143,25 @@ lower stakes and a new user might not check their inbox right away) and emails i
 `AuthEmailSender` used for password reset, marking the new account `emailVerified = false` until
 `POST /api/auth/verify-email` consumes it.
 
-**Deliberately informational only right now, not enforced.** Registration still returns real,
-immediately usable tokens regardless of verification status - nothing currently checks
-`emailVerified` or blocks an unverified account from doing anything. Gating real functionality on
-verification (e.g. requiring it before creating a business) is a natural, separate follow-up, not
-assumed to be part of introducing the flag and the flow itself.
+**Enforced at login (issue #120), not at registration.** `register` still returns real, immediately
+usable tokens regardless of verification status - unchanged, since the frontend's registration
+flow expects to land the user straight in the app. `POST /api/auth/login` is the enforcement
+point instead: correct credentials against an unverified account get a `403 FORBIDDEN`
+("Please verify your email before logging in."), not the `200` a verified account gets - a
+deliberately distinct response from the `401` "wrong email or password" case, since these
+credentials genuinely are correct. Not counted against `LoginRateLimiter` either - that exists to
+slow down credential-guessing, not to penalize a real, correctly-authenticated user.
+
+Since the original verification token is single-use and only valid 7 days, `POST
+/api/auth/resend-verification` (email in, always `200` whether or not the account exists or is
+already verified - same enumeration-avoidance shape as `forgot-password`) issues a fresh one,
+replacing any previous unconsumed token - added alongside the enforcement itself specifically to
+avoid permanently locking out anyone whose original token expired or never arrived.
+
+Gating other real functionality on verification (e.g. requiring it before creating a business) was
+considered and deliberately not done here - login is the one meaningful checkpoint a real user
+actually passes through, and blocking individual actions afterward would be considerably more
+design surface for limited extra benefit.
 
 ## Login rate limiting (issue #35)
 
