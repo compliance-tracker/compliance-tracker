@@ -2,6 +2,8 @@ package com.chrainx.compliance_tracker.auth;
 
 import jakarta.persistence.*;
 
+import java.time.Instant;
+
 // Table name is "app_user", not "user" - "user" is a reserved word in Postgres (and most SQL
 // dialects), would need quoting everywhere otherwise.
 @Entity
@@ -26,6 +28,13 @@ public class User {
     // to be part of this flag's introduction.
     private boolean emailVerified = false;
 
+    // Set on a successful password reset (issue #96) - any JWT issued before this instant is
+    // treated as revoked (see JwtAuthenticationFilter/AuthController.refresh), even though the
+    // token itself is still unexpired and correctly signed. NULL (the default for every existing
+    // account, and any account that's never reset its password) means no floor at all - every
+    // token stays valid until its own natural expiry, the previous behavior.
+    private Instant tokenValidAfter;
+
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 
@@ -37,4 +46,7 @@ public class User {
 
     public boolean isEmailVerified() { return emailVerified; }
     public void setEmailVerified(boolean emailVerified) { this.emailVerified = emailVerified; }
+
+    public Instant getTokenValidAfter() { return tokenValidAfter; }
+    public void setTokenValidAfter(Instant tokenValidAfter) { this.tokenValidAfter = tokenValidAfter; }
 }

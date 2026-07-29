@@ -2,9 +2,12 @@ package com.chrainx.compliance_tracker.auth;
 
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class JwtServiceTest {
@@ -90,5 +93,31 @@ class JwtServiceTest {
         String second = jwtService.generateAccessToken("someone@example.com");
 
         assertFalse(first.equals(second), "two tokens generated back-to-back must not be identical");
+    }
+
+    // extractIssuedAt (issue #96) - used to compare a token's mint time against
+    // User.tokenValidAfter, so a password reset can invalidate tokens issued before it.
+    @Test
+    void extractIssuedAt_returnsATimestampCloseToNow_forAFreshToken() {
+        Instant before = Instant.now();
+        String token = jwtService.generateAccessToken("someone@example.com");
+        Instant after = Instant.now();
+
+        Instant issuedAt = jwtService.extractIssuedAt(token).toInstant();
+
+        // Second-precision claim, so allow either boundary to be equal, not just strictly between.
+        assertFalse(issuedAt.isBefore(before.minusSeconds(1)));
+        assertFalse(issuedAt.isAfter(after.plusSeconds(1)));
+    }
+
+    @Test
+    void extractIssuedAt_worksForARefreshTokenToo() {
+        String token = jwtService.generateRefreshToken("someone@example.com");
+        assertNotNull(jwtService.extractIssuedAt(token));
+    }
+
+    @Test
+    void extractIssuedAt_returnsNull_forGarbageToken() {
+        assertNull(jwtService.extractIssuedAt("not-a-real-jwt"));
     }
 }
