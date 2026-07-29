@@ -67,7 +67,13 @@ public class SecurityConfig {
                         // exposed at all (management.endpoints.web.exposure.include=health in
                         // application.properties), so this can't accidentally open up anything
                         // more sensitive even if that property ever widened.
-                        .requestMatchers("/hello", "/api/auth/**", "/error", "/actuator/health/**").permitAll()
+                        // OpenAPI/Swagger UI (issue #21) - documentation, not an endpoint that
+                        // does anything on a caller's behalf, so it's public the same way the
+                        // GitHub repo/README already are. /v3/api-docs is the generated spec
+                        // itself (what Swagger UI fetches to render); /swagger-ui/** is the UI's
+                        // own static assets and the page at /swagger-ui/index.html.
+                        .requestMatchers("/hello", "/api/auth/**", "/error", "/actuator/health/**",
+                                "/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                         .anyRequest().authenticated()
                 )
                 // Runs our JwtAuthenticationFilter before Spring Security's own default

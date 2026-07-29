@@ -51,6 +51,18 @@
 			<artifactId>spring-boot-starter-web</artifactId>
 		</dependency>
 
+		<!-- OpenAPI spec + Swagger UI (issue #21), generated from the existing controllers/DTOs
+		     with no annotations required to get a working baseline - the README's hand-maintained
+		     endpoint table drifts out of sync as endpoints grow, this can't. v3.0.x specifically -
+		     springdoc-openapi 2.x only supports Spring Boot 3; this project is already on Spring
+		     Boot 4.1.0 (Spring Framework 7), and 3.0.x is the first line with real Spring Boot 4
+		     support. -->
+		<dependency>
+			<groupId>org.springdoc</groupId>
+			<artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+			<version>3.0.3</version>
+		</dependency>
+
 		<!-- /actuator/health (issue #44) - a load balancer/container orchestrator's health/
 		     readiness check target once this is ever actually deployed (#5). Auto-configures a
 		     real DB connectivity health indicator (DataSource is on the classpath via

@@ -130,6 +130,24 @@ Gradle convention, and it kept import parity easy to check while doing the split
   pass at all.
 - **`HelloController`** — `GET /hello`, a minimal smoke-test endpoint from initial setup.
 
+## API documentation (issue #21)
+
+`springdoc-openapi-starter-webmvc-ui` generates an OpenAPI 3 spec (`GET /v3/api-docs`) and an
+interactive Swagger UI (`/swagger-ui/index.html`) directly from the existing controllers/DTOs —
+no annotations needed for a working baseline, since the request/response shape is already
+explicit (`BusinessRequest`/`BusinessResponse` etc., issue #46). `OpenApiConfig` adds the two
+things springdoc can't infer on its own: human-readable title/description (echoing this app's
+own disclaimer — it's a reminder tool, not compliance advice), and a `bearerAuth` HTTP security
+scheme, without which Swagger UI's own "Authorize" button would have nothing to attach a JWT to
+when trying a protected endpoint from the docs UI itself. Both the spec and the UI are
+`permitAll()`'d in `SecurityConfig` — they're documentation, not an endpoint acting on anyone's
+behalf, same reasoning as the health endpoints above being public. **springdoc-openapi 3.0.x
+specifically** — the 2.x line only supports Spring Boot 3; this project is on Spring Boot 4.1.0
+(Spring Framework 7), and 3.0.x is the first line with real Spring Boot 4 support, confirmed via
+springdoc's own docs before adding the dependency (checked live, not assumed, given this project
+has already hit several real Spring Boot 4 compatibility surprises — see backend/CLAUDE.md's
+gotchas).
+
 ## Health/readiness (issue #44)
 
 `GET /actuator/health` (plus the Kubernetes-style `/actuator/health/liveness` and
