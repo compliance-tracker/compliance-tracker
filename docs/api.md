@@ -8,6 +8,7 @@ Better here than moved twice.
 | Method | Path                          | Auth required | Description                    |
 |--------|-------------------------------|----------------|---------------------------------|
 | GET    | `/hello`                      | No             | Smoke-test endpoint             |
+| GET    | `/actuator/health`            | No             | Overall health — `{"status":"UP"}` with no other detail (issue #44). `/actuator/health/liveness`/`/actuator/health/readiness` sub-groups exist too, for a container orchestrator's separate liveness/readiness probes — see [architecture.md](architecture.md) |
 | POST   | `/api/auth/register`          | No             | Create an account, returns `{ token, refreshToken }` — `400` if the password is under 8 characters or missing a letter/digit. Also emails a verification token (informational only right now — see "Email verification" in [security.md](security.md); nothing currently checks it) |
 | POST   | `/api/auth/login`              | No             | Returns `{ token, refreshToken }` for an existing account — `429` after 5 failed attempts from the same IP within a minute |
 | POST   | `/api/auth/refresh`            | No*            | Exchanges a valid refresh token for a brand new `{ token, refreshToken }` pair — the old refresh token is revoked in the same call (single-use/rotated), so reusing it afterward gets `401`. `400` if no `Bearer` token was sent, `401` if it's missing/expired/revoked/not actually a refresh token. *Same permitAll caveat as logout below |
