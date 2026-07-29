@@ -3,6 +3,7 @@ import com.chrainx.compliance_tracker.auth.User;
 
 import com.chrainx.compliance_tracker.error.ApiError;
 import com.chrainx.compliance_tracker.rules.Deadline;
+import com.chrainx.compliance_tracker.rules.ObligationType;
 import com.chrainx.compliance_tracker.rules.RuleEngine;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -10,10 +11,12 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 // @RestController: marks this class as an HTTP handler whose return values get serialized
@@ -26,19 +29,22 @@ public class BusinessController {
     private final BusinessRepository businessRepository;
     private final WorkPassRepository workPassRepository;
     private final IdempotencyKeyRepository idempotencyKeyRepository;
+    private final DeadlineRecordRepository deadlineRecordRepository;
     private final RuleEngine ruleEngine;
 
     // @Autowired: Spring sees this constructor needs a BusinessRepository, WorkPassRepository,
-    // IdempotencyKeyRepository, and RuleEngine, and since it already knows how to create all
-    // four (repositories are auto-implemented interfaces, RuleEngine is @Component), it builds
-    // them and passes them in automatically - we never call `new BusinessController(...)`
-    // ourselves.
+    // IdempotencyKeyRepository, DeadlineRecordRepository, and RuleEngine, and since it already
+    // knows how to create all five (repositories are auto-implemented interfaces, RuleEngine is
+    // @Component), it builds them and passes them in automatically - we never call
+    // `new BusinessController(...)` ourselves.
     @Autowired
     public BusinessController(BusinessRepository businessRepository, WorkPassRepository workPassRepository,
-                               IdempotencyKeyRepository idempotencyKeyRepository, RuleEngine ruleEngine) {
+                               IdempotencyKeyRepository idempotencyKeyRepository,
+                               DeadlineRecordRepository deadlineRecordRepository, RuleEngine ruleEngine) {
         this.businessRepository = businessRepository;
         this.workPassRepository = workPassRepository;
         this.idempotencyKeyRepository = idempotencyKeyRepository;
+        this.deadlineRecordRepository = deadlineRecordRepository;
         this.ruleEngine = ruleEngine;
     }
 
@@ -159,6 +165,12 @@ public class BusinessController {
     // Applies a BusinessRequest's fields onto the already-owned, already-persisted entity
     // fetched via findByIdAndOwnerId - same structural IDOR-avoidance as createBusiness above,
     // there's no id/owner field on the request DTO for a client to even supply.
+    //
+    // @Transactional: deleteByBusinessIdAndObligationTypeAndReminderSentFalse below is a derived
+    // delete query, which (like PasswordResetTokenRepository.deleteByUserId, issue #37) needs an
+    // actual transaction already open on the calling thread - a plain repository call doesn't
+    // provide one by default.
+    @Transactional
     @PutMapping("/{id}")
     public ResponseEntity<?> updateBusiness(@PathVariable Long id, @Valid @RequestBody BusinessRequest request,
                                              @AuthenticationPrincipal User currentUser) {
@@ -176,8 +188,19 @@ public class BusinessController {
         // legitimately represent any later, unrelated annual cycle - re-validating it against
         // incorporationDate on every future edit would risk flagging a perfectly normal update
         // to a long-standing business as a "first year" violation it has nothing to do with.
-        // Changing an existing FYE has its own (different, ≤12-months-normally,
-        // ≤18-with-approval) rule, not modeled yet (issue #30) - not the same check.
+        // Changing an existing FYE has its own (different, ≤12-months-normally, ≤18-with-
+        // approval) validation rule, not modeled yet - a real, deliberately separate scope
+        // decision from the stale-record cleanup below (issue #30's own scope).
+        //
+        // The actual bug #30 exists for: DeadlineSyncService recomputes deadlines from
+        // RuleEngine every day and inserts any not already persisted, but has no way to remove
+        // one that's now WRONG because the FYE it was computed from just changed - its own
+        // dedupe check only prevents re-inserting something that's already correct. Without this
+        // cleanup, a business that changes FYE would end up with the stale, unreminded old ACRA
+        // deadline still sitting in the queue right alongside the newly-synced correct one, and
+        // could get reminded off the wrong due date.
+        boolean financialYearEndChanged = !Objects.equals(business.getFinancialYearEnd(), request.financialYearEnd());
+
         business.setName(request.name());
         business.setFinancialYearEnd(request.financialYearEnd());
         business.setGstRegistered(request.gstRegistered());
@@ -193,7 +216,14 @@ public class BusinessController {
             business.setIncorporationDate(request.incorporationDate());
         }
 
-        return ResponseEntity.ok(BusinessResponse.from(businessRepository.save(business)));
+        Business saved = businessRepository.save(business);
+
+        if (financialYearEndChanged) {
+            deadlineRecordRepository.deleteByBusinessIdAndObligationTypeAndReminderSentFalse(
+                    saved.getId(), ObligationType.ACRA_ANNUAL_RETURN);
+        }
+
+        return ResponseEntity.ok(BusinessResponse.from(saved));
     }
 
     // Deleting a business also removes its work passes and deadline records - enforced via

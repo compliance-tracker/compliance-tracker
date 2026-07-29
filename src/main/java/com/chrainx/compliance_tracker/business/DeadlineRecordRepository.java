@@ -20,4 +20,14 @@ public interface DeadlineRecordRepository extends JpaRepository<DeadlineRecord, 
     // own leadTimeDays, there's no single cutoff this query could apply; DeadlineSyncService
     // filters per-record against its own business's leadTimeDays instead.
     List<DeadlineRecord> findByReminderSentFalse();
+
+    // Cleans up a stale, not-yet-reminded deadline after a business's financialYearEnd changes
+    // (issue #30) - DeadlineSyncService's own dedupe check (existsByBusinessIdAndObligationType-
+    // AndDueDate) only ever prevents re-inserting a deadline that's already correct; it has no
+    // way to remove one that's now wrong because the FYE it was computed from changed. Without
+    // this, a business that changes its FYE would end up with the OLD (now-incorrect) unreminded
+    // ACRA record still sitting in the queue alongside the newly-synced correct one, and could
+    // get reminded off the wrong due date. Scoped to reminderSentFalse only - an already-sent
+    // reminder is historical record of something that genuinely happened and is left alone.
+    void deleteByBusinessIdAndObligationTypeAndReminderSentFalse(Long businessId, ObligationType obligationType);
 }

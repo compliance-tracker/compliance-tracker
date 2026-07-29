@@ -136,9 +136,16 @@ Gradle convention, and it kept import parity easy to check while doing the split
   computation can't carry: state, specifically `reminderSent`. `rules.Deadline` itself stays
   a pure in-memory value with no DB knowledge.
 - **`DeadlineRecordRepository`** — Spring Data JPA repository for `DeadlineRecord`, including
-  `existsByBusinessIdAndObligationTypeAndDueDate` (dedupe check) and `findByReminderSentFalse`
+  `existsByBusinessIdAndObligationTypeAndDueDate` (dedupe check), `findByReminderSentFalse`
   (the starting point for the "what needs a reminder" query — see `findDueSoonAndUnreminded`
-  below for why the actual due-date cutoff isn't part of this query anymore).
+  below for why the actual due-date cutoff isn't part of this query anymore), and
+  `deleteByBusinessIdAndObligationTypeAndReminderSentFalse` (issue #30) — called from
+  `BusinessController.updateBusiness` whenever `financialYearEnd` actually changes, to remove
+  the now-stale, not-yet-reminded ACRA deadline the *old* FYE produced. `DeadlineSyncService`'s
+  own dedupe check only ever prevents re-inserting a deadline that's already correct; it has no
+  way to remove one that's become wrong because the FYE it was computed from changed underneath
+  it, so without this cleanup a business that changes FYE would end up with the stale record
+  still sitting in the reminder queue right alongside the newly-synced correct one.
 - **`DeadlineSyncService`** — `@Service` with a `@Scheduled` method (`syncDeadlines`, daily at
   01:00 Singapore time — `zone = "Asia/Singapore"` explicitly, issue #28, not the server's own
   default timezone) that recomputes every business's deadlines from scratch via `RuleEngine` each run and
