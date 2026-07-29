@@ -99,6 +99,6 @@ Issues #1–4, #7–16, #19 are closed (rules engine, REST API, full reminder pi
 
 Backend recently restructured its docs — `README.md` is now a concise overview; deep detail lives in `docs/api.md`, `docs/architecture.md`, `docs/security.md`, `docs/notifications.md` (issue #78, plus a same-day follow-up splitting the API table into its own file too, since the API surface is expected to keep growing).
 
-**#5** (deploy to real AWS) and **#6** (load testing) are open but **deliberately deferred, not blocked** — see root `CLAUDE.md`'s "AWS deployment decision": Fargate has no free tier, cost (not account access) is why this is on hold. Also open: **#18** (DLQ monitoring/alerting), **#21** (API docs/OpenAPI).
+**#5** (deploy to real AWS) and **#6** (load testing) are open but **deliberately deferred, not blocked** — see root `CLAUDE.md`'s "AWS deployment decision": Fargate has no free tier, cost (not account access) is why this is on hold. Also open: **#120** (enforce email verification — #36 built the informational-only flow, nothing gates on it yet; a real gap surfaced while scoping this, no resend-verification endpoint exists, so enforcing without one would lock out anyone whose token expired/never arrived).
 
 See `README.md` and GitHub issues for full detail; don't duplicate that detail here.
