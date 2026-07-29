@@ -1,9 +1,14 @@
 # API reference
 
 Split into its own file rather than kept in the main README — the API surface is expected to
-grow (admin rule endpoints are tracked/designed but not built yet), and issue #21 already
-anticipates this manually-maintained table eventually being replaced by generated OpenAPI docs.
-Better here than moved twice.
+grow (admin rule endpoints are tracked/designed but not built yet).
+
+**A generated, always-current alternative to this hand-maintained table now exists too** (issue
+#21): run the app and open `http://localhost:8081/swagger-ui/index.html` for an interactive
+Swagger UI (or `GET /v3/api-docs` for the raw OpenAPI 3 spec) — both public, no auth required,
+generated automatically from the real controllers/DTOs so it can't drift the way a hand-written
+table can. This table stays too, since a scannable overview and an interactive per-endpoint
+explorer serve different purposes — not a duplicate to eventually delete.
 
 | Method | Path                          | Auth required | Description                    |
 |--------|-------------------------------|----------------|---------------------------------|

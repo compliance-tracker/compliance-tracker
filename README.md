@@ -91,6 +91,16 @@ the CI workflow's own GitHub Actions weekly, opening a PR automatically when one
 vulnerability or a newer version available. Repo-level vulnerability alerts and automated
 security-fix PRs are both enabled too — visible under the repo's Security tab.
 
+## API documentation
+
+Interactive, always-current API docs are generated automatically from the real controllers/DTOs
+(issue #21, [springdoc-openapi](https://springdoc.org)) — run the app and open
+`http://localhost:8081/swagger-ui/index.html` (or `GET /v3/api-docs` for the raw OpenAPI 3 spec).
+Both are public, no auth required — it's documentation, not an endpoint acting on anyone's
+behalf. Try-it-out against a real protected endpoint by registering/logging in via
+`docs/api.md`'s curl walkthrough, then pasting the returned token into Swagger UI's own
+"Authorize" button.
+
 ## More docs
 
 - [docs/api.md](docs/api.md) — full endpoint reference and a curl walkthrough.
