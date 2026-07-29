@@ -45,6 +45,9 @@ class BusinessIntegrationTest {
     @Autowired
     private DeadlineSyncService deadlineSyncService;
 
+    @Autowired
+    private DeadlineRecordRepository deadlineRecordRepository;
+
     private String registerAndGetToken() {
         String email = "business-e2e-" + System.nanoTime() + "@example.com";
         return restTemplate.postForEntity(
@@ -92,6 +95,41 @@ class BusinessIntegrationTest {
 
         assertTrue(listBusinesses(headers).stream()
                 .anyMatch(b -> b.id().equals(businessId) && b.name().equals("Corrected Name")));
+    }
+
+    // Real, end-to-end proof of issue #30's actual bug: DeadlineSyncService recomputes deadlines
+    // from RuleEngine every sync and inserts any not already persisted, but has no way on its
+    // own to remove one that's now WRONG because the FYE it was computed from changed - without
+    // updateBusiness's cleanup, the OLD (now-incorrect) unreminded ACRA record would still be
+    // sitting there right alongside the newly-synced correct one.
+    @Test
+    void updateBusiness_changingFinancialYearEnd_removesTheStaleUnremindedAcraRecord_notJustAddsANewOne() {
+        HttpHeaders headers = authHeaders(registerAndGetToken());
+        BusinessRequest createRequest = new BusinessRequest(
+                "FYE Change Co", LocalDate.of(2026, 12, 31), false, null, null);
+        Long businessId = restTemplate.postForEntity(
+                "/api/businesses", new HttpEntity<>(createRequest, headers), BusinessResponse.class).getBody().id();
+
+        deadlineSyncService.syncDeadlines();
+        LocalDate oldAcraDueDate = LocalDate.of(2027, 7, 31); // 2026-12-31 + 7 months
+        assertTrue(deadlineRecordRepository.findAll().stream()
+                .anyMatch(r -> r.getBusiness().getId().equals(businessId) && r.getDueDate().equals(oldAcraDueDate)));
+
+        BusinessRequest updateRequest = new BusinessRequest(
+                "FYE Change Co", LocalDate.of(2027, 3, 31), false, null, null);
+        restTemplate.exchange("/api/businesses/" + businessId, HttpMethod.PUT,
+                new HttpEntity<>(updateRequest, headers), BusinessResponse.class);
+
+        // The stale record must be gone immediately after the update, before the next sync even
+        // runs - proving updateBusiness itself cleaned it up, not just that a later sync happened
+        // to overwrite it.
+        assertTrue(deadlineRecordRepository.findAll().stream()
+                .noneMatch(r -> r.getBusiness().getId().equals(businessId) && r.getDueDate().equals(oldAcraDueDate)));
+
+        deadlineSyncService.syncDeadlines();
+        LocalDate newAcraDueDate = LocalDate.of(2027, 10, 31); // 2027-03-31 + 7 months
+        assertTrue(deadlineRecordRepository.findAll().stream()
+                .anyMatch(r -> r.getBusiness().getId().equals(businessId) && r.getDueDate().equals(newAcraDueDate)));
     }
 
     @Test

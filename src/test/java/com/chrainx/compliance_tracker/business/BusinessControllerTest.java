@@ -36,9 +36,10 @@ class BusinessControllerTest {
     private final BusinessRepository businessRepository = mock(BusinessRepository.class);
     private final WorkPassRepository workPassRepository = mock(WorkPassRepository.class);
     private final IdempotencyKeyRepository idempotencyKeyRepository = mock(IdempotencyKeyRepository.class);
+    private final DeadlineRecordRepository deadlineRecordRepository = mock(DeadlineRecordRepository.class);
     private final RuleEngine ruleEngine = new RuleEngine();
     private final BusinessController controller = new BusinessController(
-            businessRepository, workPassRepository, idempotencyKeyRepository, ruleEngine);
+            businessRepository, workPassRepository, idempotencyKeyRepository, deadlineRecordRepository, ruleEngine);
 
     private final User currentUser = new User();
 
@@ -312,6 +313,44 @@ class BusinessControllerTest {
         ResponseEntity<?> response = controller.updateBusiness(1L, request, currentUser);
 
         assertEquals(200, response.getStatusCode().value());
+    }
+
+    // Stale-deadline-record cleanup on FYE change (issue #30) - DeadlineSyncService's own dedupe
+    // check only ever prevents re-inserting a deadline that's already correct, it never removes
+    // one that's now wrong because the FYE it was computed from changed underneath it.
+
+    @Test
+    void updateBusiness_whenFinancialYearEndChanges_deletesStaleUnremindedAcraRecords() {
+        Business existing = new Business();
+        existing.setId(1L);
+        existing.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
+
+        BusinessRequest request = new BusinessRequest("Same Co", LocalDate.of(2027, 3, 31), false, null, null);
+
+        when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(existing));
+        when(businessRepository.save(existing)).thenReturn(existing);
+
+        controller.updateBusiness(1L, request, currentUser);
+
+        verify(deadlineRecordRepository).deleteByBusinessIdAndObligationTypeAndReminderSentFalse(
+                1L, ObligationType.ACRA_ANNUAL_RETURN);
+    }
+
+    @Test
+    void updateBusiness_whenFinancialYearEndIsUnchanged_doesNotTouchDeadlineRecords() {
+        Business existing = new Business();
+        existing.setId(1L);
+        existing.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
+
+        // Same financialYearEnd as already stored - only name/gstRegistered actually change.
+        BusinessRequest request = new BusinessRequest("Renamed Co", LocalDate.of(2026, 12, 31), true, null, null);
+
+        when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(existing));
+        when(businessRepository.save(existing)).thenReturn(existing);
+
+        controller.updateBusiness(1L, request, currentUser);
+
+        verifyNoInteractions(deadlineRecordRepository);
     }
 
     @Test
