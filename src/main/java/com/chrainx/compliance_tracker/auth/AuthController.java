@@ -12,6 +12,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Date;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -158,6 +160,18 @@ public class AuthController {
             return ResponseEntity.status(401).body(new ApiError("UNAUTHORIZED", "Invalid or expired refresh token."));
         }
 
+        // Same tokenValidAfter floor JwtAuthenticationFilter.isValidForUser enforces on access
+        // tokens (issue #96) - without this, a refresh token minted before a password reset
+        // could still be exchanged for a brand new access token indefinitely, defeating the
+        // point of the reset invalidating existing sessions. Same truncatedTo(SECONDS) reasoning
+        // as that method - see its comment for why.
+        if (user.getTokenValidAfter() != null) {
+            Date issuedAt = jwtService.extractIssuedAt(refreshToken);
+            if (issuedAt == null || issuedAt.toInstant().isBefore(user.getTokenValidAfter().truncatedTo(ChronoUnit.SECONDS))) {
+                return ResponseEntity.status(401).body(new ApiError("UNAUTHORIZED", "Invalid or expired refresh token."));
+            }
+        }
+
         tokenBlocklist.revoke(refreshToken);
 
         return ResponseEntity.ok(new AuthResponse(
@@ -233,6 +247,11 @@ public class AuthController {
 
         User user = userRepository.findById(resetToken.get().getUserId()).orElseThrow();
         user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
+        // Closes issue #96: stops the old password from working (above) but a reset used to
+        // leave any JWT issued before it - e.g. one an attacker had already obtained - valid
+        // until its own natural expiry. Every access/refresh token checks this floor now (see
+        // JwtAuthenticationFilter.isValidForUser / this class's own refresh()).
+        user.setTokenValidAfter(Instant.now());
         userRepository.save(user);
 
         // Single-use: delete every token for this user, not just the one that was used - covers

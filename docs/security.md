@@ -118,11 +118,22 @@ the same password strength check as registration (issue #43) and deletes every r
 that user, not just the one used, so a reset genuinely ends the token's usability rather than
 leaving a second still-valid one from an earlier request.
 
-**Known limitation:** a password reset does not currently invalidate the user's existing JWT
-sessions. If an account was compromised, resetting the password stops the attacker from logging
-in again, but any access/refresh token they already obtained stays valid until its own natural
-expiry (or an explicit logout revokes it) - `TokenBlocklist` revokes by exact token string, not
-by user, so there's no "revoke every session for this user" operation yet - tracked as issue #96.
+**Session invalidation on reset (issue #96):** `User.tokenValidAfter` is set to `Instant.now()` on
+a successful `reset-password`. Unlike `TokenBlocklist` (which revokes by exact token string, and
+only ever sees a token this app itself explicitly revoked, e.g. via logout), this is a per-user
+floor checked against every token's own `iat` claim — so it also catches tokens `TokenBlocklist`
+never had a reference to, without needing to enumerate and revoke each one individually.
+`JwtAuthenticationFilter.isValidForUser` enforces it for access tokens, `AuthController.refresh`
+enforces the same check for refresh tokens (otherwise a pre-reset refresh token could just mint a
+fresh access token forever, defeating the point). `NULL` (every account that's never reset its
+password) means no floor at all, the previous unrestricted behavior.
+
+**Known limitation of the check itself:** a JWT `iat` claim only has *second* precision (the JWT
+numeric-date format), while `tokenValidAfter` is a sub-second `Instant`. The comparison floors
+`tokenValidAfter` down to the second it falls in before comparing, so a token minted in the exact
+same second as the reset — even a fraction *before* it — is still accepted. This is a deliberate,
+narrow (sub-one-second) trade-off in favor of not locking a user out of the very session they just
+created by logging back in immediately after a reset, not an oversight.
 
 ## Email verification (issue #36)
 

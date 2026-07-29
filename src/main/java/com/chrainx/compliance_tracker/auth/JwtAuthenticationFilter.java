@@ -10,7 +10,9 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.time.temporal.ChronoUnit;
 import java.util.Collections;
+import java.util.Date;
 
 // Runs once per request, before the actual controller. Looks for "Authorization: Bearer <token>",
 // and if it's present, not revoked, not a refresh token, and valid, tells Spring Security "this
@@ -50,13 +52,42 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
                 if (email != null) {
                     userRepository.findByEmail(email).ifPresent(user -> {
-                        var authentication = new UsernamePasswordAuthenticationToken(user, null, Collections.emptyList());
-                        SecurityContextHolder.getContext().setAuthentication(authentication);
+                        // A password reset (issue #96) sets tokenValidAfter to the moment of
+                        // reset - a token minted before that is rejected here even though its
+                        // own signature/expiry still check out, since TokenBlocklist alone can't
+                        // catch a session this filter never saw get issued (e.g. one from before
+                        // this deployment, or simply one the reset flow has no reference to).
+                        if (isValidForUser(token, user)) {
+                            var authentication = new UsernamePasswordAuthenticationToken(user, null, Collections.emptyList());
+                            SecurityContextHolder.getContext().setAuthentication(authentication);
+                        }
                     });
                 }
             }
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    // Package-private, not private, so JwtAuthenticationFilterTest can exercise it directly
+    // without needing a full mocked request/response/filter chain just to prove this one rule.
+    boolean isValidForUser(String token, User user) {
+        if (user.getTokenValidAfter() == null) {
+            return true;
+        }
+        Date issuedAt = jwtService.extractIssuedAt(token);
+        if (issuedAt == null) {
+            return false;
+        }
+        // A JWT's "iat" claim only has *second* precision (the numeric-date format the JWT spec
+        // uses), but tokenValidAfter is an Instant.now() with sub-second precision - comparing
+        // them directly would wrongly reject a token legitimately minted in the same second as
+        // the reset (e.g. logging back in immediately after). Truncating tokenValidAfter down to
+        // the second it falls in fixes that false rejection; the trade-off is a token minted a
+        // fraction of a second *before* the reset, in that same second, is accepted too - an
+        // unavoidable consequence of the JWT format's own precision limit, not something this
+        // comparison can resolve, and a narrow (sub-one-second) window worth documenting rather
+        // than pretending away.
+        return !issuedAt.toInstant().isBefore(user.getTokenValidAfter().truncatedTo(ChronoUnit.SECONDS));
     }
 }
