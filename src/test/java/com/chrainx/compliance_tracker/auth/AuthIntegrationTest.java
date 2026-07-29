@@ -444,6 +444,62 @@ class AuthIntegrationTest {
     }
 
     @Test
+    void resetPassword_invalidatesTokensIssuedBeforeTheReset_butNotAFreshLoginAfter() throws InterruptedException {
+        // Real, end-to-end proof of issue #96: a password reset must not just stop the old
+        // password from working (already covered above) - any access/refresh token minted
+        // *before* the reset needs to stop working too, since a reset is often prompted by "I
+        // think someone else has my password", and a token they already obtained shouldn't
+        // outlive that.
+        String email = "auth-e2e-reset-sessions-" + System.nanoTime() + "@example.com";
+        AuthResponse original = restTemplate.postForEntity(
+                "/api/auth/register", new AuthRequest(email, "old-password1"), AuthResponse.class).getBody();
+
+        // A JWT's issued-at only has second precision, and tokenValidAfter's own floor to the
+        // second (see JwtAuthenticationFilter.isValidForUser's comment) means a token minted in
+        // the *same second* as the reset is deliberately still accepted - an inherent trade-off
+        // of that precision, not a bug. Sleeping past the second boundary here is what makes this
+        // test actually prove the invalidation, rather than risk a coin-flip pass depending on
+        // how fast the two HTTP calls happen to land relative to a wall-clock second tick.
+        Thread.sleep(1100);
+
+        restTemplate.postForEntity("/api/auth/forgot-password", new ForgotPasswordRequest(email), Void.class);
+        String realToken = passwordResetTokenRepository.findAll().stream()
+                .filter(t -> t.getUserId() != null)
+                .reduce((first, second) -> second)
+                .orElseThrow()
+                .getToken();
+        restTemplate.postForEntity(
+                "/api/auth/reset-password", new ResetPasswordRequest(realToken, "new-password1"), Void.class);
+
+        // The pre-reset access token no longer authenticates anything...
+        HttpHeaders oldAccessHeaders = new HttpHeaders();
+        oldAccessHeaders.setBearerAuth(original.token());
+        ResponseEntity<String> businessesWithOldToken = restTemplate.exchange(
+                "/api/businesses", org.springframework.http.HttpMethod.GET,
+                new HttpEntity<>(oldAccessHeaders), String.class);
+        assertEquals(HttpStatus.UNAUTHORIZED, businessesWithOldToken.getStatusCode());
+
+        // ...and the pre-reset refresh token can't be used to mint a new one either, or the
+        // whole point of the invalidation would be trivially bypassable.
+        HttpHeaders oldRefreshHeaders = new HttpHeaders();
+        oldRefreshHeaders.setBearerAuth(original.refreshToken());
+        ResponseEntity<AuthResponse> refreshWithOldToken = restTemplate.postForEntity(
+                "/api/auth/refresh", new HttpEntity<>(oldRefreshHeaders), AuthResponse.class);
+        assertEquals(HttpStatus.UNAUTHORIZED, refreshWithOldToken.getStatusCode());
+
+        // But a fresh login with the new password issues tokens that work normally - the
+        // invalidation is a floor on issued-at, not a permanent lockout.
+        AuthResponse freshLogin = restTemplate.postForEntity(
+                "/api/auth/login", new AuthRequest(email, "new-password1"), AuthResponse.class).getBody();
+        HttpHeaders newAccessHeaders = new HttpHeaders();
+        newAccessHeaders.setBearerAuth(freshLogin.token());
+        ResponseEntity<String> businessesWithNewToken = restTemplate.exchange(
+                "/api/businesses", org.springframework.http.HttpMethod.GET,
+                new HttpEntity<>(newAccessHeaders), String.class);
+        assertEquals(HttpStatus.OK, businessesWithNewToken.getStatusCode());
+    }
+
+    @Test
     void resetPassword_withTheSameTokenTwice_failsTheSecondTime() {
         // The actual single-use guarantee, over real HTTP - a token that's already been
         // consumed (or intercepted and reused by someone else after the legitimate reset)

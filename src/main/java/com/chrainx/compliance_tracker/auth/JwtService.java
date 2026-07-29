@@ -90,6 +90,24 @@ public class JwtService {
         }
     }
 
+    // Returns null under the same "not genuinely valid" conditions as extractEmail - a token
+    // whose issued-at can't be read isn't one whose issued-at can be compared against anything
+    // either. Used to check a token against User.tokenValidAfter (issue #96): a token minted
+    // before a password reset needs rejecting even though its own signature/expiry still check
+    // out fine.
+    public Date extractIssuedAt(String token) {
+        try {
+            return Jwts.parser()
+                    .verifyWith(key)
+                    .build()
+                    .parseSignedClaims(token)
+                    .getPayload()
+                    .getIssuedAt();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     // false for anything invalid too (garbage, expired, wrong signature) - a token that isn't
     // even genuinely verifiable certainly isn't a valid refresh token either.
     public boolean isRefreshToken(String token) {
