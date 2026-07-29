@@ -92,10 +92,6 @@ public class AuthController {
             return ResponseEntity.status(409).body(new ApiError("CONFLICT", "An account with this email already exists."));
         }
 
-        // Fires and forgets a verification email (issue #36) - deliberately doesn't block or
-        // gate the response on this. The account is real and immediately usable either way;
-        // email ownership is proven separately, on its own time, not a precondition for using
-        // the app at all right now (see User.emailVerified's own comment).
         EmailVerificationToken verificationToken = new EmailVerificationToken();
         verificationToken.setToken(UUID.randomUUID().toString());
         verificationToken.setUserId(user.getId());
@@ -103,8 +99,15 @@ public class AuthController {
         emailVerificationTokenRepository.save(verificationToken);
         authEmailSender.sendVerificationEmail(user.getEmail(), verificationToken.getToken());
 
-        return ResponseEntity.ok(new AuthResponse(
-                jwtService.generateAccessToken(user.getEmail()), jwtService.generateRefreshToken(user.getEmail())));
+        // Issue #120 (expanded scope): register no longer returns usable tokens - previously it
+        // did, deliberately, on the reasoning that email ownership was proven "separately, on its
+        // own time" rather than as a precondition. That's now inconsistent with login itself
+        // requiring a verified email (see below): auto-logging in an account that couldn't log
+        // back in again without verifying first was a real, confusing gap once login actually
+        // started enforcing it. No AuthResponse/tokens here anymore - just confirmation that
+        // registration succeeded and where to go next.
+        return ResponseEntity.ok(new RegistrationResponse(
+                "Registration successful. Check your email to verify your account, then log in."));
     }
 
     @PostMapping("/login")

@@ -2,6 +2,10 @@ package com.chrainx.compliance_tracker.notifications;
 
 import com.chrainx.compliance_tracker.auth.AuthRequest;
 import com.chrainx.compliance_tracker.auth.AuthResponse;
+import com.chrainx.compliance_tracker.auth.EmailVerificationTokenRepository;
+import com.chrainx.compliance_tracker.auth.RegistrationResponse;
+import com.chrainx.compliance_tracker.auth.UserRepository;
+import com.chrainx.compliance_tracker.auth.VerifyEmailRequest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.TestRestTemplate;
@@ -29,6 +33,29 @@ class NotificationStatusIntegrationTest {
     @Autowired
     private TestRestTemplate restTemplate;
 
+    @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
+    private EmailVerificationTokenRepository emailVerificationTokenRepository;
+
+    // Issue #120: register no longer returns usable tokens, and login requires a verified email -
+    // same real register/verify/login flow AuthIntegrationTest uses.
+    private String registerVerifyAndLogin(String email, String password) {
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, password), RegistrationResponse.class);
+
+        Long userId = userRepository.findByEmail(email).orElseThrow().getId();
+        String verificationToken = emailVerificationTokenRepository.findAll().stream()
+                .filter(t -> t.getUserId().equals(userId))
+                .reduce((first, second) -> second)
+                .orElseThrow()
+                .getToken();
+        restTemplate.postForEntity("/api/auth/verify-email", new VerifyEmailRequest(verificationToken), Void.class);
+
+        return restTemplate.postForEntity("/api/auth/login", new AuthRequest(email, password), AuthResponse.class)
+                .getBody().token();
+    }
+
     @Test
     void status_requiresAuth_likeEveryOtherRealApiEndpoint() {
         // Unlike /actuator/health or the OpenAPI docs, this reflects real app configuration
@@ -42,9 +69,7 @@ class NotificationStatusIntegrationTest {
     @Test
     void status_forAnAuthenticatedCaller_reportsTheRealConfiguredChannel() {
         String email = "notif-status-" + System.nanoTime() + "@example.com";
-        ResponseEntity<AuthResponse> registerResponse = restTemplate.postForEntity(
-                "/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class);
-        String token = registerResponse.getBody().token();
+        String token = registerVerifyAndLogin(email, "a-real-password1");
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
@@ -64,9 +89,7 @@ class NotificationStatusIntegrationTest {
         // omitting the field entirely (vs. serializing it as null) is only actually proven by
         // looking at the real response body.
         String email = "notif-status-omit-" + System.nanoTime() + "@example.com";
-        ResponseEntity<AuthResponse> registerResponse = restTemplate.postForEntity(
-                "/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class);
-        String token = registerResponse.getBody().token();
+        String token = registerVerifyAndLogin(email, "a-real-password1");
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);

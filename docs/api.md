@@ -14,7 +14,7 @@ explorer serve different purposes — not a duplicate to eventually delete.
 |--------|-------------------------------|----------------|---------------------------------|
 | GET    | `/hello`                      | No             | Smoke-test endpoint             |
 | GET    | `/actuator/health`            | No             | Overall health — `{"status":"UP"}` with no other detail (issue #44). `/actuator/health/liveness`/`/actuator/health/readiness` sub-groups exist too, for a container orchestrator's separate liveness/readiness probes — see [architecture.md](architecture.md) |
-| POST   | `/api/auth/register`          | No             | Create an account, returns `{ token, refreshToken }` immediately — `400` if the password is under 8 characters or missing a letter/digit. Also emails a verification token (still logs the caller in right away either way — see "Email verification" in [security.md](security.md)) |
+| POST   | `/api/auth/register`          | No             | Create an account and email a verification token — returns `{ message }`, **not** usable tokens (issue #120, expanded scope) — `400` if the password is under 8 characters or missing a letter/digit. The caller must verify and then call `login` separately; see "Email verification" in [security.md](security.md) |
 | POST   | `/api/auth/login`              | No             | Returns `{ token, refreshToken }` for an existing, verified account — `429` after 5 failed attempts from the same IP within a minute, `403` if the account exists and the password is correct but the email isn't verified yet (issue #120) |
 | POST   | `/api/auth/resend-verification` | No            | Always returns `200` regardless of whether the email is registered or already verified (same enumeration-avoidance as `forgot-password`) — if it's registered and unverified, emails a fresh single-use verification token, replacing any previous one (issue #120) |
 | POST   | `/api/auth/refresh`            | No*            | Exchanges a valid refresh token for a brand new `{ token, refreshToken }` pair — the old refresh token is revoked in the same call (single-use/rotated), so reusing it afterward gets `401`. `400` if no `Bearer` token was sent, `401` if it's missing/expired/revoked/not actually a refresh token. *Same permitAll caveat as logout below |
@@ -72,10 +72,21 @@ the default and always safe — every prior behavior is unchanged.
 
 ## Example
 
-Register, then use the returned token for everything else:
+Register, verify (the token is only ever emailed - logged, not sent, unless
+`notifications.channel=email` is configured, see [notifications.md](notifications.md)), log in,
+then use the returned token for everything else:
 
 ```bash
-TOKEN=$(curl -s -X POST http://localhost:8081/api/auth/register \
+curl -s -X POST http://localhost:8081/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email": "you@example.com", "password": "a-real-password1"}'
+# {"message":"Registration successful. Check your email to verify your account, then log in."}
+
+# Read the real token out of the logs/Mailpit/your inbox, then:
+curl -X POST http://localhost:8081/api/auth/verify-email \
+  -H "Content-Type: application/json" -d '{"token": "the-real-token"}'
+
+TOKEN=$(curl -s -X POST http://localhost:8081/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email": "you@example.com", "password": "a-real-password1"}' | jq -r .token)
 
