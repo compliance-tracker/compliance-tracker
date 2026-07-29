@@ -3,6 +3,7 @@ import com.chrainx.compliance_tracker.notifications.NotificationSender;
 import com.chrainx.compliance_tracker.business.DeadlineRecordRepository;
 import com.chrainx.compliance_tracker.business.DeadlineRecord;
 
+import com.chrainx.compliance_tracker.logging.CorrelationIdSupport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -59,6 +60,15 @@ public class ReminderWorkerService {
     @Scheduled(fixedDelay = 30_000)
     @Transactional
     public void pollAndProcess() {
+        // Issue #51: @Transactional has to stay on this outer method (see the self-invocation
+        // note above) - wrapping the body in CorrelationIdSupport here, before delegating to
+        // the private impl, gives this one poll cycle's whole batch a shared correlation ID
+        // without disturbing that. Same reasoning as the sync/dispatch jobs: this runs on its
+        // own scheduled thread, never inside an HTTP request.
+        CorrelationIdSupport.runWithNewCorrelationId(this::doPollAndProcess);
+    }
+
+    private void doPollAndProcess() {
         String queueUrl = sqsClient.getQueueUrl(
                 GetQueueUrlRequest.builder().queueName(queueName).build()
         ).queueUrl();

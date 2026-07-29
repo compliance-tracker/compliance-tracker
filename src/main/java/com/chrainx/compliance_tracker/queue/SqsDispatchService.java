@@ -2,6 +2,7 @@ package com.chrainx.compliance_tracker.queue;
 import com.chrainx.compliance_tracker.business.DeadlineSyncService;
 import com.chrainx.compliance_tracker.business.DeadlineRecord;
 
+import com.chrainx.compliance_tracker.logging.CorrelationIdSupport;
 import com.chrainx.compliance_tracker.rules.RuleEngine;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -49,7 +50,10 @@ public class SqsDispatchService {
     // project's scope; flagged as a known limitation.
     @Scheduled(cron = "0 15 1 * * *", zone = "Asia/Singapore")
     public void scheduledDispatch() {
-        dispatchDueSoonDeadlines();
+        // Issue #51: same reasoning as DeadlineSyncService.syncDeadlines - this runs on its own
+        // scheduled thread, not inside any HTTP request, so gets its own correlation ID
+        // covering every message this one dispatch run sends.
+        CorrelationIdSupport.runWithNewCorrelationId(this::dispatchDueSoonDeadlines);
     }
 
     // No longer takes a daysAhead parameter (issue #53) - "how far ahead counts as due soon" is

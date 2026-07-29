@@ -1,5 +1,6 @@
 package com.chrainx.compliance_tracker.business;
 
+import com.chrainx.compliance_tracker.logging.CorrelationIdSupport;
 import com.chrainx.compliance_tracker.rules.Deadline;
 import com.chrainx.compliance_tracker.rules.RuleEngine;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -47,6 +48,14 @@ public class DeadlineSyncService {
     // automatically with no separate "update" logic needed.
     @Scheduled(cron = "0 0 1 * * *", zone = "Asia/Singapore")
     public void syncDeadlines() {
+        // Issue #51: this job runs on its own scheduled thread, never inside an HTTP request -
+        // CorrelationIdFilter has nothing to attach to. Gives every log line this one run
+        // produces (across every business it processes) a shared, greppable ID, the same way a
+        // web request gets one.
+        CorrelationIdSupport.runWithNewCorrelationId(this::doSyncDeadlines);
+    }
+
+    private void doSyncDeadlines() {
         LocalDate today = LocalDate.now(RuleEngine.SINGAPORE_TIME_ZONE);
 
         for (Business business : businessRepository.findAll()) {

@@ -2,8 +2,10 @@ package com.chrainx.compliance_tracker.queue;
 import com.chrainx.compliance_tracker.business.DeadlineRecord;
 import com.chrainx.compliance_tracker.business.Business;
 import com.chrainx.compliance_tracker.business.DeadlineSyncService;
+import com.chrainx.compliance_tracker.logging.CorrelationIdFilter;
 
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.GetQueueUrlRequest;
 import software.amazon.awssdk.services.sqs.model.GetQueueUrlResponse;
@@ -14,6 +16,8 @@ import java.time.LocalDate;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
@@ -57,5 +61,22 @@ class SqsDispatchServiceTest {
 
         assertEquals(0, dispatched);
         verify(sqsClient, never()).sendMessage(any(SendMessageRequest.class));
+    }
+
+    // Issue #51: scheduledDispatch (not dispatchDueSoonDeadlines directly, which the tests above
+    // call) is the one actually wrapped in CorrelationIdSupport, since it's the @Scheduled
+    // entry point that runs on its own thread outside any HTTP request.
+    @Test
+    void scheduledDispatch_setsACorrelationId_forTheDurationOfTheRun_andClearsItAfterwards() {
+        when(sqsClient.getQueueUrl(any(GetQueueUrlRequest.class)))
+                .thenReturn(GetQueueUrlResponse.builder().queueUrl("http://localhost:4566/000000000000/compliance-reminders").build());
+        when(deadlineSyncService.findDueSoonAndUnreminded(any())).thenAnswer(invocation -> {
+            assertNotNull(MDC.get(CorrelationIdFilter.MDC_KEY));
+            return List.of();
+        });
+
+        service.scheduledDispatch();
+
+        assertNull(MDC.get(CorrelationIdFilter.MDC_KEY));
     }
 }
