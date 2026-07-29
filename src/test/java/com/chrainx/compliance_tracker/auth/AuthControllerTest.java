@@ -368,12 +368,42 @@ class AuthControllerTest {
 
         when(passwordResetTokenRepository.findByToken("valid-token")).thenReturn(Optional.of(token));
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        // Non-zero: deleteByUserId (issue #115) is now a bulk delete returning the affected-row
+        // count, and resetPassword treats 0 as "someone else already consumed this token."
+        when(passwordResetTokenRepository.deleteByUserId(1L)).thenReturn(1);
 
         ResponseEntity<?> response = controller.resetPassword(new ResetPasswordRequest("valid-token", "new-password1"));
 
         assertEquals(200, response.getStatusCode().value());
         assertTrue(passwordEncoder.matches("new-password1", user.getPasswordHash()));
         verify(passwordResetTokenRepository).deleteByUserId(1L);
+    }
+
+    @Test
+    void resetPassword_returns401_whenTheTokenWasAlreadyConsumedByAConcurrentRequest() {
+        // Regression test for issue #115: deleteByUserId returning 0 (its real-world outcome when
+        // a near-simultaneous duplicate request already deleted the same row first) must be
+        // treated the same as an invalid/expired token, not silently proceed to reset the
+        // password anyway.
+        User user = new User();
+        user.setId(1L);
+        user.setEmail("owner@example.com");
+        user.setPasswordHash(passwordEncoder.encode("old-password1"));
+
+        PasswordResetToken token = new PasswordResetToken();
+        token.setToken("valid-token");
+        token.setUserId(1L);
+        token.setExpiresAt(Instant.now().plusSeconds(60));
+
+        when(passwordResetTokenRepository.findByToken("valid-token")).thenReturn(Optional.of(token));
+        when(passwordResetTokenRepository.deleteByUserId(1L)).thenReturn(0);
+
+        ResponseEntity<?> response = controller.resetPassword(new ResetPasswordRequest("valid-token", "new-password1"));
+
+        assertEquals(401, response.getStatusCode().value());
+        assertEquals("UNAUTHORIZED", errorBody(response).error());
+        verify(userRepository, never()).save(any());
+        assertTrue(passwordEncoder.matches("old-password1", user.getPasswordHash()));
     }
 
     @Test
@@ -436,12 +466,39 @@ class AuthControllerTest {
 
         when(emailVerificationTokenRepository.findByToken("valid-token")).thenReturn(Optional.of(token));
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        // Non-zero: same reasoning as resetPassword's equivalent stub above (issue #115).
+        when(emailVerificationTokenRepository.deleteByUserId(1L)).thenReturn(1);
 
         ResponseEntity<?> response = controller.verifyEmail(new VerifyEmailRequest("valid-token"));
 
         assertEquals(200, response.getStatusCode().value());
         assertTrue(user.isEmailVerified());
         verify(emailVerificationTokenRepository).deleteByUserId(1L);
+    }
+
+    @Test
+    void verifyEmail_returns401_whenTheTokenWasAlreadyConsumedByAConcurrentRequest() {
+        // Regression test for issue #115 (the actual bug it was originally filed for): two
+        // near-simultaneous requests for the same verification token used to 500 on the loser;
+        // deleteByUserId returning 0 must now resolve to the same 401 an already-used token gets.
+        User user = new User();
+        user.setId(1L);
+        user.setEmail("owner@example.com");
+
+        EmailVerificationToken token = new EmailVerificationToken();
+        token.setToken("valid-token");
+        token.setUserId(1L);
+        token.setExpiresAt(Instant.now().plusSeconds(60));
+
+        when(emailVerificationTokenRepository.findByToken("valid-token")).thenReturn(Optional.of(token));
+        when(emailVerificationTokenRepository.deleteByUserId(1L)).thenReturn(0);
+
+        ResponseEntity<?> response = controller.verifyEmail(new VerifyEmailRequest("valid-token"));
+
+        assertEquals(401, response.getStatusCode().value());
+        assertEquals("UNAUTHORIZED", errorBody(response).error());
+        verify(userRepository, never()).save(any());
+        assertFalse(user.isEmailVerified());
     }
 
     @Test
