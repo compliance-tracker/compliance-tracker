@@ -4,6 +4,7 @@ import com.chrainx.compliance_tracker.auth.User;
 import com.chrainx.compliance_tracker.error.ApiError;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -47,14 +48,19 @@ public class WorkPassController {
         return ResponseEntity.ok(WorkPassResponse.from(workPassRepository.save(workPass)));
     }
 
+    // Paginated (issue #49), same shape as BusinessController.getAllBusinesses - a business with
+    // a large workforce shouldn't get every work pass back in one unbounded response.
     @GetMapping
-    public ResponseEntity<?> getWorkPasses(@PathVariable Long businessId, @AuthenticationPrincipal User currentUser) {
+    public ResponseEntity<?> getWorkPasses(@PathVariable Long businessId, @AuthenticationPrincipal User currentUser,
+                                            @RequestParam(defaultValue = "0") int page,
+                                            @RequestParam(defaultValue = "20") int size) {
         Optional<Business> business = businessRepository.findByIdAndOwnerId(businessId, currentUser.getId());
         if (business.isEmpty()) {
             return ResponseEntity.status(404).body(new ApiError("NOT_FOUND", "Business not found."));
         }
 
-        return ResponseEntity.ok(workPassRepository.findByBusinessId(businessId).stream().map(WorkPassResponse::from).toList());
+        Page<WorkPass> workPasses = workPassRepository.findByBusinessId(businessId, PageResponse.pageable(page, size));
+        return ResponseEntity.ok(PageResponse.from(workPasses.map(WorkPassResponse::from)));
     }
 
     @DeleteMapping("/{workPassId}")

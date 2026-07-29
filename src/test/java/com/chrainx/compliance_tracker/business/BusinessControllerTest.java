@@ -16,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -187,11 +188,12 @@ class BusinessControllerTest {
     void getAllBusinesses_returnsOnlyCurrentUsersBusinesses() {
         Business business = new Business();
         business.setId(1L);
-        when(businessRepository.findByOwnerId(1L)).thenReturn(List.of(business));
+        when(businessRepository.findByOwnerId(eq(1L), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(business)));
 
-        List<BusinessResponse> result = controller.getAllBusinesses(currentUser);
+        PageResponse<BusinessResponse> result = controller.getAllBusinesses(currentUser, 0, 20);
 
-        assertEquals(1, result.size());
+        assertEquals(1, result.content().size());
     }
 
     @Test

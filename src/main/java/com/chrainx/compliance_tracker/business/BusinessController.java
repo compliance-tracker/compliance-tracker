@@ -7,6 +7,7 @@ import com.chrainx.compliance_tracker.rules.RuleEngine;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -104,9 +105,15 @@ public class BusinessController {
         }
     }
 
+    // Paginated (issue #49) - page is 0-indexed, size defaults to 20 and is capped at 100
+    // (PageResponse.pageable), so a caller with hundreds of businesses (e.g. an accounting firm
+    // managing many clients) doesn't get every row back in one unbounded response.
     @GetMapping
-    public List<BusinessResponse> getAllBusinesses(@AuthenticationPrincipal User currentUser) {
-        return businessRepository.findByOwnerId(currentUser.getId()).stream().map(BusinessResponse::from).toList();
+    public PageResponse<BusinessResponse> getAllBusinesses(@AuthenticationPrincipal User currentUser,
+                                                             @RequestParam(defaultValue = "0") int page,
+                                                             @RequestParam(defaultValue = "20") int size) {
+        Page<Business> businesses = businessRepository.findByOwnerId(currentUser.getId(), PageResponse.pageable(page, size));
+        return PageResponse.from(businesses.map(BusinessResponse::from));
     }
 
     // @PathVariable: pulls the {id} segment out of the URL into this parameter.

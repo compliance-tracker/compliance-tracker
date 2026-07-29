@@ -65,6 +65,16 @@ class BusinessIntegrationTest {
                 .getBody().id();
     }
 
+    // GET /api/businesses returns a PageResponse<BusinessResponse>, not a bare array (issue
+    // #49) - a generic type, so ParameterizedTypeReference is needed to deserialize it
+    // correctly (plain .class tokens lose generic type info to erasure).
+    private List<BusinessResponse> listBusinesses(HttpHeaders headers) {
+        ResponseEntity<PageResponse<BusinessResponse>> response = restTemplate.exchange(
+                "/api/businesses", HttpMethod.GET, new HttpEntity<>(headers),
+                new org.springframework.core.ParameterizedTypeReference<PageResponse<BusinessResponse>>() {});
+        return response.getBody().content();
+    }
+
     @Test
     void updateBusiness_appliesChanges_forOwnBusiness() {
         HttpHeaders headers = authHeaders(registerAndGetToken());
@@ -80,9 +90,7 @@ class BusinessIntegrationTest {
         assertEquals(LocalDate.of(2027, 3, 31), updateResponse.getBody().financialYearEnd());
         assertTrue(updateResponse.getBody().gstRegistered());
 
-        ResponseEntity<BusinessResponse[]> listResponse = restTemplate.exchange(
-                "/api/businesses", HttpMethod.GET, new HttpEntity<>(headers), BusinessResponse[].class);
-        assertTrue(java.util.Arrays.stream(listResponse.getBody())
+        assertTrue(listBusinesses(headers).stream()
                 .anyMatch(b -> b.id().equals(businessId) && b.name().equals("Corrected Name")));
     }
 
@@ -100,9 +108,7 @@ class BusinessIntegrationTest {
 
         assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
 
-        ResponseEntity<BusinessResponse[]> listResponse = restTemplate.exchange(
-                "/api/businesses", HttpMethod.GET, new HttpEntity<>(headersA), BusinessResponse[].class);
-        assertTrue(java.util.Arrays.stream(listResponse.getBody())
+        assertTrue(listBusinesses(headersA).stream()
                 .anyMatch(b -> b.id().equals(businessAId) && b.name().equals("User A's Business")));
     }
 
@@ -115,9 +121,7 @@ class BusinessIntegrationTest {
                 "/api/businesses/" + businessId, HttpMethod.DELETE, new HttpEntity<>(headers), Void.class);
         assertEquals(HttpStatus.NO_CONTENT, deleteResponse.getStatusCode());
 
-        ResponseEntity<BusinessResponse[]> listResponse = restTemplate.exchange(
-                "/api/businesses", HttpMethod.GET, new HttpEntity<>(headers), BusinessResponse[].class);
-        assertTrue(java.util.Arrays.stream(listResponse.getBody())
+        assertTrue(listBusinesses(headers).stream()
                 .noneMatch(b -> b.id().equals(businessId)));
     }
 
@@ -132,9 +136,7 @@ class BusinessIntegrationTest {
                 "/api/businesses/" + businessAId, HttpMethod.DELETE, new HttpEntity<>(headersB), Void.class);
         assertEquals(HttpStatus.NOT_FOUND, deleteResponse.getStatusCode());
 
-        ResponseEntity<BusinessResponse[]> listResponse = restTemplate.exchange(
-                "/api/businesses", HttpMethod.GET, new HttpEntity<>(headersA), BusinessResponse[].class);
-        assertTrue(java.util.Arrays.stream(listResponse.getBody())
+        assertTrue(listBusinesses(headersA).stream()
                 .anyMatch(b -> b.id().equals(businessAId)));
     }
 
@@ -252,9 +254,7 @@ class BusinessIntegrationTest {
 
         assertEquals(firstId, secondId);
 
-        ResponseEntity<BusinessResponse[]> listResponse = restTemplate.exchange(
-                "/api/businesses", HttpMethod.GET, new HttpEntity<>(headers), BusinessResponse[].class);
-        long matchingCount = java.util.Arrays.stream(listResponse.getBody())
+        long matchingCount = listBusinesses(headers).stream()
                 .filter(b -> b.name().equals("Retried Co")).count();
         assertEquals(1, matchingCount, "the retry must not have created a second business");
     }
@@ -302,10 +302,39 @@ class BusinessIntegrationTest {
         assertEquals(businessIds.get(0), businessIds.get(1),
                 "both concurrent requests must resolve to the same business, not two different ones");
 
-        ResponseEntity<BusinessResponse[]> listResponse = restTemplate.exchange(
-                "/api/businesses", HttpMethod.GET, new HttpEntity<>(headers), BusinessResponse[].class);
-        long matchingCount = java.util.Arrays.stream(listResponse.getBody())
+        long matchingCount = listBusinesses(headers).stream()
                 .filter(b -> b.name().equals("Race Co")).count();
         assertEquals(1, matchingCount, "exactly one business must exist, not one per thread");
+    }
+
+    private PageResponse<BusinessResponse> getBusinessesPage(HttpHeaders headers, int page, int size) {
+        ResponseEntity<PageResponse<BusinessResponse>> response = restTemplate.exchange(
+                "/api/businesses?page=" + page + "&size=" + size, HttpMethod.GET, new HttpEntity<>(headers),
+                new org.springframework.core.ParameterizedTypeReference<PageResponse<BusinessResponse>>() {});
+        return response.getBody();
+    }
+
+    @Test
+    void getAllBusinesses_isPaginated() {
+        // Real HTTP proof of issue #49: with a small page size, the response is genuinely split
+        // across multiple pages with correct metadata and no overlap - not just accepting the
+        // query params without doing anything with them.
+        HttpHeaders headers = authHeaders(registerAndGetToken());
+        for (int i = 0; i < 5; i++) {
+            createBusiness(headers, "Paged Co " + i);
+        }
+
+        PageResponse<BusinessResponse> firstPage = getBusinessesPage(headers, 0, 2);
+        assertEquals(2, firstPage.content().size());
+        assertEquals(0, firstPage.page());
+        assertEquals(2, firstPage.size());
+        assertEquals(5, firstPage.totalElements());
+        assertEquals(3, firstPage.totalPages());
+
+        PageResponse<BusinessResponse> secondPage = getBusinessesPage(headers, 1, 2);
+        assertEquals(2, secondPage.content().size());
+        assertTrue(firstPage.content().stream()
+                .noneMatch(b -> secondPage.content().stream().anyMatch(b2 -> b2.id().equals(b.id()))),
+                "the two pages must not overlap");
     }
 }

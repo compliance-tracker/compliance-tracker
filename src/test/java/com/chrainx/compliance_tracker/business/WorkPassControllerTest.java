@@ -29,9 +29,10 @@ class WorkPassControllerTest {
 
     // Controller methods now return ResponseEntity<?> (issue #47 - the success body and the
     // ApiError error body are different types), so tests cast the body where they inspect it.
+    // getWorkPasses' success body is now a PageResponse (issue #49), not a bare List.
     @SuppressWarnings("unchecked")
-    private List<WorkPassResponse> workPassesBody(ResponseEntity<?> response) {
-        return (List<WorkPassResponse>) response.getBody();
+    private PageResponse<WorkPassResponse> workPassesBody(ResponseEntity<?> response) {
+        return (PageResponse<WorkPassResponse>) response.getBody();
     }
 
     // Note on issue #66's IDOR: the test that used to prove createWorkPass clears a
@@ -75,19 +76,20 @@ class WorkPassControllerTest {
         pass.setId(1L);
 
         when(businessRepository.findByIdAndOwnerId(10L, 1L)).thenReturn(Optional.of(business));
-        when(workPassRepository.findByBusinessId(10L)).thenReturn(List.of(pass));
+        when(workPassRepository.findByBusinessId(eq(10L), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(pass)));
 
-        ResponseEntity<?> response = controller.getWorkPasses(10L, currentUser);
+        ResponseEntity<?> response = controller.getWorkPasses(10L, currentUser, 0, 20);
 
         assertEquals(200, response.getStatusCode().value());
-        assertEquals(1, workPassesBody(response).size());
+        assertEquals(1, workPassesBody(response).content().size());
     }
 
     @Test
     void getWorkPasses_returns404_whenBusinessDoesNotBelongToCaller() {
         when(businessRepository.findByIdAndOwnerId(10L, 1L)).thenReturn(Optional.empty());
 
-        ResponseEntity<?> response = controller.getWorkPasses(10L, currentUser);
+        ResponseEntity<?> response = controller.getWorkPasses(10L, currentUser, 0, 20);
 
         assertEquals(404, response.getStatusCode().value());
     }
