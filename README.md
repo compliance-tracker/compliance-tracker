@@ -83,6 +83,14 @@ don't run and race the tests' own explicit calls — see `SchedulingConfig`. The
 classes (including `AuthControllerTest`, `JwtServiceTest`) are plain unit tests with no such
 dependency.
 
+## Dependency vulnerability scanning
+
+[Dependabot](https://docs.github.com/en/code-security/dependabot) is configured
+(`.github/dependabot.yml`) to check Maven dependencies (`pom.xml`, including transitive ones) and
+the CI workflow's own GitHub Actions weekly, opening a PR automatically when one has a known
+vulnerability or a newer version available. Repo-level vulnerability alerts and automated
+security-fix PRs are both enabled too — visible under the repo's Security tab.
+
 ## More docs
 
 - [docs/api.md](docs/api.md) — full endpoint reference and a curl walkthrough.

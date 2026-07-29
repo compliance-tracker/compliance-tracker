@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # Maven dependencies (pom.xml) - Dependabot cross-references every resolved dependency,
+  # including transitive ones, against GitHub's Advisory Database. A known-vulnerable version
+  # (or one with a newer release available) gets its own PR automatically, weekly - separate
+  # from GitHub's own "Dependabot alerts" (repo Security tab), which fire as soon as a new
+  # advisory is published, not on a schedule; this config is specifically the "open a PR to fix
+  # it" half, not the "tell me it exists" half.
+  - package-ecosystem: "maven"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # The CI workflow's own actions (actions/checkout, actions/setup-java) can go stale or, rarely,
+  # have their own advisories (a compromised/malicious Action release is a real supply-chain
+  # vector) - same reasoning as scanning pom.xml, applied to .github/workflows/*.yml instead.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
