@@ -1,14 +1,18 @@
 package com.chrainx.compliance_tracker.business;
 
+import com.chrainx.compliance_tracker.logging.CorrelationIdFilter;
 import com.chrainx.compliance_tracker.rules.ObligationType;
 import com.chrainx.compliance_tracker.rules.RuleEngine;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 
 import java.time.LocalDate;
 import java.util.Collections;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.*;
@@ -56,6 +60,21 @@ class DeadlineSyncServiceTest {
         service.syncDeadlines();
 
         verify(deadlineRecordRepository, never()).save(any(DeadlineRecord.class));
+    }
+
+    // Issue #51: syncDeadlines runs on its own @Scheduled thread, never inside an HTTP request,
+    // so CorrelationIdFilter never runs for it - CorrelationIdSupport is what gives this run's
+    // own log lines a shared, greppable ID instead.
+    @Test
+    void syncDeadlines_setsACorrelationId_forTheDurationOfTheRun_andClearsItAfterwards() {
+        when(businessRepository.findAll()).thenAnswer(invocation -> {
+            assertNotNull(MDC.get(CorrelationIdFilter.MDC_KEY));
+            return Collections.emptyList();
+        });
+
+        service.syncDeadlines();
+
+        assertNull(MDC.get(CorrelationIdFilter.MDC_KEY));
     }
 
     // findDueSoonAndUnreminded now filters per-record against its own business's leadTimeDays

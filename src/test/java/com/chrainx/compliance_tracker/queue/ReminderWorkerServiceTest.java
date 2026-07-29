@@ -15,6 +15,8 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -146,5 +148,21 @@ class ReminderWorkerServiceTest {
 
         assertEquals(true, okRecord.isReminderSent());
         verify(sqsClient, times(1)).deleteMessage(any(DeleteMessageRequest.class));
+    }
+
+    // Issue #51: pollAndProcess runs on its own @Scheduled thread, never inside an HTTP request,
+    // so it gets its own correlation ID covering the whole poll cycle's batch.
+    @Test
+    void pollAndProcess_setsACorrelationId_forTheDurationOfTheRun_andClearsItAfterwards() {
+        when(sqsClient.getQueueUrl(any(GetQueueUrlRequest.class)))
+                .thenReturn(GetQueueUrlResponse.builder().queueUrl("http://localhost:4566/000000000000/compliance-reminders").build());
+        when(sqsClient.receiveMessage(any(ReceiveMessageRequest.class))).thenAnswer(invocation -> {
+            assertNotNull(org.slf4j.MDC.get(com.chrainx.compliance_tracker.logging.CorrelationIdFilter.MDC_KEY));
+            return ReceiveMessageResponse.builder().messages(List.of()).build();
+        });
+
+        worker.pollAndProcess();
+
+        assertNull(org.slf4j.MDC.get(com.chrainx.compliance_tracker.logging.CorrelationIdFilter.MDC_KEY));
     }
 }

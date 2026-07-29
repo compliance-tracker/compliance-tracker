@@ -39,8 +39,9 @@ a single directory before this split (issue #90):
 |---|---|
 | `auth` | `AuthController`/`AuthRequest`/`AuthResponse`, `JwtService`, `JwtAuthenticationFilter`, `LoginRateLimiter`, `TokenBlocklist`, `User`, `UserRepository`, `PasswordResetToken`/`PasswordResetTokenRepository`, `ForgotPasswordRequest`/`ResetPasswordRequest`, `EmailVerificationToken`/`EmailVerificationTokenRepository`, `VerifyEmailRequest` |
 | `business` | `Business`/`BusinessRequest`/`BusinessResponse`/`BusinessController`/`BusinessRepository`, `WorkPass`/`WorkPassRequest`/`WorkPassResponse`/`WorkPassController`/`WorkPassRepository`, `DeadlineRecord`/`DeadlineRecordRepository`, `DeadlineSyncService`, `IdempotencyKey`/`IdempotencyKeyRepository`, `PageResponse` (pagination, issue #49) |
-| `config` | `SecurityConfig`, `CorsConfig`, `SchedulingConfig`, `SqsConfig` — cross-cutting `@Configuration` classes, not owned by any one feature |
+| `config` | `SecurityConfig`, `CorsConfig`, `SchedulingConfig`, `SqsConfig`, `OpenApiConfig` (issue #21), `LoggingConfig` (issue #51) — cross-cutting `@Configuration` classes, not owned by any one feature |
 | `error` | `ApiError`, `GlobalExceptionHandler` — the consistent structured error response format (issue #47), also cross-cutting |
+| `logging` | `CorrelationIdFilter`, `CorrelationIdSupport` (issue #51) — request/scheduled-run correlation IDs, see "Request correlation IDs" below |
 | `notifications` | `NotificationSender` interface (reminders), `EmailNotificationSender`, `LoggingNotificationSender`; `AuthEmailSender` interface (password reset #37, email verification #36), `EmailAuthEmailSender`, `LoggingAuthEmailSender` |
 | `queue` | `SqsDispatchService`, `ReminderWorkerService`, `ReminderMessage` |
 | `rules` | Pure rules-engine logic (`RuleEngine`, `Deadline`, `ObligationType`) — predates this split, was already its own package |
@@ -175,6 +176,36 @@ The DB connectivity check *is* left enabled and does mean something real — Spr
 auto-configures it from the `DataSource` already on the classpath (`spring-boot-starter-data-jpa`),
 so readiness genuinely reflects whether the app can currently reach Postgres, not just that the
 JVM process is up.
+
+## Request correlation IDs (issue #51)
+
+`CorrelationIdFilter` puts a per-request ID into SLF4J's MDC (a thread-local map every log line
+on that thread can read from) — reused from an incoming `X-Correlation-Id` header if the caller
+already has one, otherwise a fresh `UUID.randomUUID()`. Echoed back as a response header too, so
+a user/client reporting an issue can hand back the exact ID to search logs for.
+`logging.pattern.level=%5p [%X{correlationId:-}]` (`application.properties`) is what actually
+makes it show up in log output — Spring Boot's own documented hook for injecting MDC content
+into the default pattern without a full custom `logback-spring.xml`.
+
+**Registered at `Ordered.HIGHEST_PRECEDENCE` via `LoggingConfig`, not left to Spring Boot's
+default filter auto-registration.** A plain `@Component` filter would otherwise register at
+`LOWEST_PRECEDENCE` (last) — meaning Spring Security's own filter chain (registered separately,
+much earlier) could reject a request outright (401/403) before it ever reached the correlation
+filter at all, leaving exactly the requests most worth tracing with no ID on their log lines.
+`LoggingConfig` wraps the same `CorrelationIdFilter` bean in an explicit `FilterRegistrationBean`
+instead, forcing it to run first — verified live that a genuinely `401`-rejected request still
+carries the header.
+
+**The reminder pipeline (`DeadlineSyncService.syncDeadlines`, `SqsDispatchService.scheduledDispatch`,
+`ReminderWorkerService.pollAndProcess`) needed a second, different mechanism** — these all run on
+their own `@Scheduled` trigger, never inside an HTTP request, so `CorrelationIdFilter` has
+nothing to run through for them. `CorrelationIdSupport.runWithNewCorrelationId(Runnable)` gives
+each one's own invocation a fresh correlation ID the same way, covering every business/message
+that one run touches. Each of the three `@Scheduled` methods now delegates its actual body to a
+private method, wrapped in `runWithNewCorrelationId` — `ReminderWorkerService.pollAndProcess`
+specifically keeps `@Transactional` on the outer `@Scheduled` method (Spring's `@Transactional`
+proxy doesn't intercept self-invocation, an existing gotcha this project already hit once) and
+wraps around the delegation to its private impl, not the other way around.
 
 ## Reminder pipeline
 
