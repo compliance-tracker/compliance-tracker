@@ -589,4 +589,143 @@ class AuthIntegrationTest {
         assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
         assertEquals("UNAUTHORIZED", response.getBody().error());
     }
+
+    @Test
+    void concurrentVerifyEmailRequests_forTheSameToken_resolveToExactlyOneSuccess() throws Exception {
+        // Regression test for issue #115: found live via React StrictMode's double-effect firing
+        // two near-simultaneous POST /api/auth/verify-email calls for the same token - the loser
+        // used to 500 (an uncaught ObjectOptimisticLockingFailureException from
+        // deleteByUserId finding the row already gone) instead of the same clean 401 a genuinely
+        // reused token gets. Same real-two-threads-against-real-Postgres technique as issue #42's
+        // registration race test above, not simulated.
+        String email = "auth-e2e-verify-race-" + System.nanoTime() + "@example.com";
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class);
+
+        Long userId = userRepository.findByEmail(email).orElseThrow().getId();
+        String realToken = emailVerificationTokenRepository.findAll().stream()
+                .filter(t -> t.getUserId().equals(userId))
+                .reduce((first, second) -> second)
+                .orElseThrow()
+                .getToken();
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch startLine = new CountDownLatch(1);
+
+        List<Future<ResponseEntity<Void>>> futures = List.of(
+                executor.submit(() -> {
+                    startLine.await();
+                    return restTemplate.postForEntity("/api/auth/verify-email", new VerifyEmailRequest(realToken), Void.class);
+                }),
+                executor.submit(() -> {
+                    startLine.await();
+                    return restTemplate.postForEntity("/api/auth/verify-email", new VerifyEmailRequest(realToken), Void.class);
+                })
+        );
+
+        startLine.countDown();
+        List<Integer> statusCodes = futures.stream()
+                .map(f -> {
+                    try {
+                        return f.get(10, TimeUnit.SECONDS).getStatusCode().value();
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                })
+                .collect(Collectors.toList());
+        executor.shutdown();
+
+        // Never a 500 - that's the actual bug this closes. Exactly one 200 (the winner) and one
+        // 401 (the loser, treated the same as any other already-consumed token) - never two 200s.
+        assertEquals(1, statusCodes.stream().filter(s -> s == 200).count());
+        assertEquals(1, statusCodes.stream().filter(s -> s == 401).count());
+        assertTrue(userRepository.findById(userId).orElseThrow().isEmailVerified());
+    }
+
+    @Test
+    void concurrentResetPasswordRequests_forTheSameToken_resolveToExactlyOneSuccess() throws Exception {
+        // Same shape/fix as the verify-email race above - resetPassword has the identical
+        // find-then-delete-by-user pattern issue #115 flagged as worth checking.
+        String email = "auth-e2e-reset-race-" + System.nanoTime() + "@example.com";
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class);
+        restTemplate.postForEntity("/api/auth/forgot-password", new ForgotPasswordRequest(email), Void.class);
+
+        Long userId = userRepository.findByEmail(email).orElseThrow().getId();
+        String realToken = passwordResetTokenRepository.findAll().stream()
+                .filter(t -> t.getUserId().equals(userId))
+                .reduce((first, second) -> second)
+                .orElseThrow()
+                .getToken();
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch startLine = new CountDownLatch(1);
+
+        List<Future<ResponseEntity<Void>>> futures = List.of(
+                executor.submit(() -> {
+                    startLine.await();
+                    return restTemplate.postForEntity(
+                            "/api/auth/reset-password", new ResetPasswordRequest(realToken, "new-password1"), Void.class);
+                }),
+                executor.submit(() -> {
+                    startLine.await();
+                    return restTemplate.postForEntity(
+                            "/api/auth/reset-password", new ResetPasswordRequest(realToken, "new-password1"), Void.class);
+                })
+        );
+
+        startLine.countDown();
+        List<Integer> statusCodes = futures.stream()
+                .map(f -> {
+                    try {
+                        return f.get(10, TimeUnit.SECONDS).getStatusCode().value();
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                })
+                .collect(Collectors.toList());
+        executor.shutdown();
+
+        assertEquals(1, statusCodes.stream().filter(s -> s == 200).count());
+        assertEquals(1, statusCodes.stream().filter(s -> s == 401).count());
+    }
+
+    @Test
+    void concurrentForgotPasswordRequests_forTheSameUser_neverThrow() throws Exception {
+        // Same underlying race (issue #115), different shape: forgotPassword doesn't gate on a
+        // specific already-loaded token, it just clears whatever's there before issuing a fresh
+        // one - so a duplicate request racing the same cleanup must never surface a 500, and this
+        // endpoint's own contract (always 200, regardless of what happened) must still hold.
+        String email = "auth-e2e-forgot-race-" + System.nanoTime() + "@example.com";
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class);
+        // A first forgot-password call so a token row already exists for the two racing calls
+        // below to actually contend over deleting.
+        restTemplate.postForEntity("/api/auth/forgot-password", new ForgotPasswordRequest(email), Void.class);
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch startLine = new CountDownLatch(1);
+
+        List<Future<ResponseEntity<Void>>> futures = List.of(
+                executor.submit(() -> {
+                    startLine.await();
+                    return restTemplate.postForEntity("/api/auth/forgot-password", new ForgotPasswordRequest(email), Void.class);
+                }),
+                executor.submit(() -> {
+                    startLine.await();
+                    return restTemplate.postForEntity("/api/auth/forgot-password", new ForgotPasswordRequest(email), Void.class);
+                })
+        );
+
+        startLine.countDown();
+        List<Integer> statusCodes = futures.stream()
+                .map(f -> {
+                    try {
+                        return f.get(10, TimeUnit.SECONDS).getStatusCode().value();
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                })
+                .collect(Collectors.toList());
+        executor.shutdown();
+
+        assertEquals(2, statusCodes.stream().filter(s -> s == 200).count());
+    }
 }

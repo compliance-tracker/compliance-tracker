@@ -211,6 +211,11 @@ public class AuthController {
     @PostMapping("/forgot-password")
     public ResponseEntity<Void> forgotPassword(@RequestBody ForgotPasswordRequest request) {
         userRepository.findByEmail(request.email()).ifPresent(user -> {
+            // deleteByUserId (issue #115) is a bulk delete - see its own Javadoc for why - so a
+            // near-simultaneous duplicate forgot-password request racing this same cleanup just
+            // silently deletes 0 rows instead of throwing; nothing to check for here, unlike
+            // resetPassword/verifyEmail below, since this method issues a fresh token
+            // unconditionally either way.
             passwordResetTokenRepository.deleteByUserId(user.getId());
 
             PasswordResetToken resetToken = new PasswordResetToken();
@@ -245,6 +250,23 @@ public class AuthController {
                     "Password must be at least 8 characters and include a letter and a digit."));
         }
 
+        // Single-use: delete every token for this user, not just the one that was used - covers
+        // the (should-be-rare, given forgotPassword also clears old ones) case of more than one
+        // row existing for the same user at once. Done BEFORE mutating the user, and its returned
+        // row count checked (issue #115): two near-simultaneous requests for the same token both
+        // pass the find/expiry check above before either commits, so whichever's delete runs
+        // second finds nothing left to delete (0, not 1) - the bulk-delete return value is what
+        // tells the two apart now, not a caught exception (see
+        // PasswordResetTokenRepository.deleteByUserId's Javadoc for why an exception isn't
+        // thrown at all here). Treating 0 as "already consumed" and returning the same
+        // "invalid or expired" response a genuinely reused token gets is correct (the token really
+        // has just been consumed, by the other request) and safe (no partial user mutation to
+        // worry about unwinding, since this check runs before any write).
+        int deleted = passwordResetTokenRepository.deleteByUserId(resetToken.get().getUserId());
+        if (deleted == 0) {
+            return ResponseEntity.status(401).body(new ApiError("UNAUTHORIZED", "Invalid or expired reset token."));
+        }
+
         User user = userRepository.findById(resetToken.get().getUserId()).orElseThrow();
         user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
         // Closes issue #96: stops the old password from working (above) but a reset used to
@@ -253,11 +275,6 @@ public class AuthController {
         // JwtAuthenticationFilter.isValidForUser / this class's own refresh()).
         user.setTokenValidAfter(Instant.now());
         userRepository.save(user);
-
-        // Single-use: delete every token for this user, not just the one that was used - covers
-        // the (should-be-rare, given forgotPassword also clears old ones) case of more than one
-        // row existing for the same user at once.
-        passwordResetTokenRepository.deleteByUserId(user.getId());
 
         return ResponseEntity.ok().build();
     }
@@ -274,11 +291,18 @@ public class AuthController {
             return ResponseEntity.status(401).body(new ApiError("UNAUTHORIZED", "Invalid or expired verification token."));
         }
 
+        // Same race, same fix as resetPassword above (issue #115): delete BEFORE mutating the
+        // user, and its returned row count checked, so the loser of two near-simultaneous
+        // requests for the same token is turned into the same "invalid or expired" response,
+        // before any write has happened.
+        int deleted = emailVerificationTokenRepository.deleteByUserId(verificationToken.get().getUserId());
+        if (deleted == 0) {
+            return ResponseEntity.status(401).body(new ApiError("UNAUTHORIZED", "Invalid or expired verification token."));
+        }
+
         User user = userRepository.findById(verificationToken.get().getUserId()).orElseThrow();
         user.setEmailVerified(true);
         userRepository.save(user);
-
-        emailVerificationTokenRepository.deleteByUserId(user.getId());
 
         return ResponseEntity.ok().build();
     }
