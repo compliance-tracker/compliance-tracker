@@ -75,6 +75,16 @@ class AuthIntegrationTest {
         restTemplate.postForEntity("/api/auth/verify-email", new VerifyEmailRequest(realToken), Void.class);
     }
 
+    // Issue #120 (expanded scope): register no longer returns usable tokens at all - a test that
+    // actually needs a real, working access/refresh token pair now has to go through the full
+    // real flow (register, verify, then login) rather than just reading register's own response,
+    // same as a real user would.
+    private AuthResponse registerVerifyAndLogin(String email, String password) {
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, password), RegistrationResponse.class);
+        verifyEmail(email);
+        return restTemplate.postForEntity("/api/auth/login", new AuthRequest(email, password), AuthResponse.class).getBody();
+    }
+
     @Test
     void unauthenticatedRequest_toBusinesses_isRejected() {
         ResponseEntity<String> response = restTemplate.getForEntity("/api/businesses", String.class);
@@ -103,11 +113,7 @@ class AuthIntegrationTest {
     @Test
     void registerThenUseToken_canCreateAndListOwnBusiness() {
         String email = "auth-e2e-" + System.nanoTime() + "@example.com";
-
-        ResponseEntity<AuthResponse> registerResponse = restTemplate.postForEntity(
-                "/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class);
-        assertEquals(HttpStatus.OK, registerResponse.getStatusCode());
-        String token = registerResponse.getBody().token();
+        String token = registerVerifyAndLogin(email, "a-real-password1").token();
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
@@ -149,12 +155,8 @@ class AuthIntegrationTest {
         String emailA = "auth-e2e-idor-a-" + System.nanoTime() + "@example.com";
         String emailB = "auth-e2e-idor-b-" + System.nanoTime() + "@example.com";
 
-        String tokenA = restTemplate.postForEntity(
-                "/api/auth/register", new AuthRequest(emailA, "a-real-password1"), AuthResponse.class)
-                .getBody().token();
-        String tokenB = restTemplate.postForEntity(
-                "/api/auth/register", new AuthRequest(emailB, "a-real-password1"), AuthResponse.class)
-                .getBody().token();
+        String tokenA = registerVerifyAndLogin(emailA, "a-real-password1").token();
+        String tokenB = registerVerifyAndLogin(emailB, "a-real-password1").token();
 
         HttpHeaders headersA = new HttpHeaders();
         headersA.setBearerAuth(tokenA);
@@ -203,9 +205,7 @@ class AuthIntegrationTest {
         // SecurityConfig's anyRequest().authenticated() rule, so it never reached the real
         // 400 response - it fell through to the 401 AuthenticationEntryPoint instead.
         String email = "auth-e2e-malformed-id-" + System.nanoTime() + "@example.com";
-        String token = restTemplate.postForEntity(
-                "/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class)
-                .getBody().token();
+        String token = registerVerifyAndLogin(email, "a-real-password1").token();
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
@@ -222,9 +222,7 @@ class AuthIntegrationTest {
         // Same root cause as above (issue #67), different trigger: a truly unmapped path
         // (NoHandlerFoundException) should 404, not be misreported as 401.
         String email = "auth-e2e-unmapped-path-" + System.nanoTime() + "@example.com";
-        String token = restTemplate.postForEntity(
-                "/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class)
-                .getBody().token();
+        String token = registerVerifyAndLogin(email, "a-real-password1").token();
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
@@ -241,7 +239,7 @@ class AuthIntegrationTest {
     @DirtiesContext(methodMode = DirtiesContext.MethodMode.AFTER_METHOD)
     void repeatedFailedLogins_fromSameIp_getRateLimitedWith429() {
         String email = "auth-e2e-ratelimit-" + System.nanoTime() + "@example.com";
-        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "correct-password1"), AuthResponse.class);
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "correct-password1"), RegistrationResponse.class);
 
         for (int i = 0; i < 5; i++) {
             ResponseEntity<AuthResponse> response = restTemplate.postForEntity(
@@ -258,7 +256,7 @@ class AuthIntegrationTest {
     @Test
     void login_withWrongPassword_isRejected() {
         String email = "auth-e2e-wrongpass-" + System.nanoTime() + "@example.com";
-        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "correct-password1"), AuthResponse.class);
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "correct-password1"), RegistrationResponse.class);
 
         ResponseEntity<AuthResponse> loginResponse = restTemplate.postForEntity(
                 "/api/auth/login", new AuthRequest(email, "wrong-password"), AuthResponse.class);
@@ -273,7 +271,7 @@ class AuthIntegrationTest {
         // serializes through Jackson, so it can't catch a body shape that doesn't match what
         // ResponseEntity<?> + ApiError was supposed to produce.
         String email = "auth-e2e-error-shape-" + System.nanoTime() + "@example.com";
-        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "correct-password1"), AuthResponse.class);
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "correct-password1"), RegistrationResponse.class);
 
         ResponseEntity<com.chrainx.compliance_tracker.error.ApiError> loginResponse = restTemplate.postForEntity(
                 "/api/auth/login", new AuthRequest(email, "wrong-password"),
@@ -298,14 +296,14 @@ class AuthIntegrationTest {
         ExecutorService executor = Executors.newFixedThreadPool(2);
         CountDownLatch startLine = new CountDownLatch(1);
 
-        List<Future<ResponseEntity<AuthResponse>>> futures = List.of(
+        List<Future<ResponseEntity<RegistrationResponse>>> futures = List.of(
                 executor.submit(() -> {
                     startLine.await();
-                    return restTemplate.postForEntity("/api/auth/register", request, AuthResponse.class);
+                    return restTemplate.postForEntity("/api/auth/register", request, RegistrationResponse.class);
                 }),
                 executor.submit(() -> {
                     startLine.await();
-                    return restTemplate.postForEntity("/api/auth/register", request, AuthResponse.class);
+                    return restTemplate.postForEntity("/api/auth/register", request, RegistrationResponse.class);
                 })
         );
 
@@ -336,9 +334,7 @@ class AuthIntegrationTest {
         // stops working the moment /api/auth/logout is called for it, not just that the
         // endpoint returns 200.
         String email = "auth-e2e-logout-" + System.nanoTime() + "@example.com";
-        String token = restTemplate.postForEntity(
-                        "/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class)
-                .getBody().token();
+        String token = registerVerifyAndLogin(email, "a-real-password1").token();
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
@@ -370,8 +366,7 @@ class AuthIntegrationTest {
         // endpoint, and the old refresh token it was exchanged for must be genuinely dead
         // afterward - not just that the endpoint returned 200.
         String email = "auth-e2e-refresh-" + System.nanoTime() + "@example.com";
-        AuthResponse original = restTemplate.postForEntity(
-                "/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class).getBody();
+        AuthResponse original = registerVerifyAndLogin(email, "a-real-password1");
 
         HttpHeaders refreshHeaders = new HttpHeaders();
         refreshHeaders.setBearerAuth(original.refreshToken());
@@ -397,9 +392,7 @@ class AuthIntegrationTest {
     @Test
     void refreshToken_cannotBeUsedAsAnAccessToken() {
         String email = "auth-e2e-refresh-as-access-" + System.nanoTime() + "@example.com";
-        String refreshToken = restTemplate.postForEntity(
-                "/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class)
-                .getBody().refreshToken();
+        String refreshToken = registerVerifyAndLogin(email, "a-real-password1").refreshToken();
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(refreshToken);
@@ -413,9 +406,7 @@ class AuthIntegrationTest {
     @Test
     void accessToken_cannotBeUsedToRefresh() {
         String email = "auth-e2e-access-as-refresh-" + System.nanoTime() + "@example.com";
-        String accessToken = restTemplate.postForEntity(
-                "/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class)
-                .getBody().token();
+        String accessToken = registerVerifyAndLogin(email, "a-real-password1").token();
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);
@@ -432,7 +423,7 @@ class AuthIntegrationTest {
         // out of the DB (the only way to get it, since it's only ever emailed) -> reset-password
         // -> old password now fails, new password works.
         String email = "auth-e2e-reset-" + System.nanoTime() + "@example.com";
-        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "old-password1"), AuthResponse.class);
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "old-password1"), RegistrationResponse.class);
         verifyEmail(email);
 
         ResponseEntity<Void> forgotResponse = restTemplate.postForEntity(
@@ -472,9 +463,7 @@ class AuthIntegrationTest {
         // think someone else has my password", and a token they already obtained shouldn't
         // outlive that.
         String email = "auth-e2e-reset-sessions-" + System.nanoTime() + "@example.com";
-        AuthResponse original = restTemplate.postForEntity(
-                "/api/auth/register", new AuthRequest(email, "old-password1"), AuthResponse.class).getBody();
-        verifyEmail(email);
+        AuthResponse original = registerVerifyAndLogin(email, "old-password1");
 
         // A JWT's issued-at only has second precision, and tokenValidAfter's own floor to the
         // second (see JwtAuthenticationFilter.isValidForUser's comment) means a token minted in
@@ -528,7 +517,7 @@ class AuthIntegrationTest {
         // consumed (or intercepted and reused by someone else after the legitimate reset)
         // must not work again.
         String email = "auth-e2e-reset-reuse-" + System.nanoTime() + "@example.com";
-        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "old-password1"), AuthResponse.class);
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "old-password1"), RegistrationResponse.class);
         restTemplate.postForEntity(
                 "/api/auth/forgot-password", new ForgotPasswordRequest(email), Void.class);
 
@@ -566,7 +555,7 @@ class AuthIntegrationTest {
         // real token out of the DB (only ever emailed, same technique as the password reset
         // flow tests) -> verify-email -> account is now verified, token is gone.
         String email = "auth-e2e-verify-" + System.nanoTime() + "@example.com";
-        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class);
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), RegistrationResponse.class);
 
         User freshlyRegistered = userRepository.findByEmail(email).orElseThrow();
         assertFalse(freshlyRegistered.isEmailVerified());
@@ -589,7 +578,7 @@ class AuthIntegrationTest {
     @Test
     void verifyEmail_withTheSameTokenTwice_failsTheSecondTime() {
         String email = "auth-e2e-verify-reuse-" + System.nanoTime() + "@example.com";
-        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class);
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), RegistrationResponse.class);
 
         Long userId = userRepository.findByEmail(email).orElseThrow().getId();
         String realToken = emailVerificationTokenRepository.findAll().stream()
@@ -623,7 +612,7 @@ class AuthIntegrationTest {
         // reused token gets. Same real-two-threads-against-real-Postgres technique as issue #42's
         // registration race test above, not simulated.
         String email = "auth-e2e-verify-race-" + System.nanoTime() + "@example.com";
-        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class);
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), RegistrationResponse.class);
 
         Long userId = userRepository.findByEmail(email).orElseThrow().getId();
         String realToken = emailVerificationTokenRepository.findAll().stream()
@@ -670,7 +659,7 @@ class AuthIntegrationTest {
         // Same shape/fix as the verify-email race above - resetPassword has the identical
         // find-then-delete-by-user pattern issue #115 flagged as worth checking.
         String email = "auth-e2e-reset-race-" + System.nanoTime() + "@example.com";
-        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class);
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), RegistrationResponse.class);
         restTemplate.postForEntity("/api/auth/forgot-password", new ForgotPasswordRequest(email), Void.class);
 
         Long userId = userRepository.findByEmail(email).orElseThrow().getId();
@@ -719,7 +708,7 @@ class AuthIntegrationTest {
         // one - so a duplicate request racing the same cleanup must never surface a 500, and this
         // endpoint's own contract (always 200, regardless of what happened) must still hold.
         String email = "auth-e2e-forgot-race-" + System.nanoTime() + "@example.com";
-        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class);
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), RegistrationResponse.class);
         // A first forgot-password call so a token row already exists for the two racing calls
         // below to actually contend over deleting.
         restTemplate.postForEntity("/api/auth/forgot-password", new ForgotPasswordRequest(email), Void.class);
@@ -758,7 +747,7 @@ class AuthIntegrationTest {
         // Real HTTP, end to end (issue #120): register -> login rejected with 403 while
         // unverified -> verify -> login now succeeds.
         String email = "auth-e2e-verify-then-login-" + System.nanoTime() + "@example.com";
-        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class);
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), RegistrationResponse.class);
 
         ResponseEntity<ApiError> beforeVerify = restTemplate.postForEntity(
                 "/api/auth/login", new AuthRequest(email, "a-real-password1"), ApiError.class);
@@ -778,7 +767,7 @@ class AuthIntegrationTest {
         // discarded/forgotten (simulated by just never using it) -> resend-verification -> a
         // fresh, different token arrives -> that one actually works.
         String email = "auth-e2e-resend-" + System.nanoTime() + "@example.com";
-        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), AuthResponse.class);
+        restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), RegistrationResponse.class);
         Long userId = userRepository.findByEmail(email).orElseThrow().getId();
         String originalToken = emailVerificationTokenRepository.findAll().stream()
                 .filter(t -> t.getUserId().equals(userId))

@@ -143,14 +143,21 @@ lower stakes and a new user might not check their inbox right away) and emails i
 `AuthEmailSender` used for password reset, marking the new account `emailVerified = false` until
 `POST /api/auth/verify-email` consumes it.
 
-**Enforced at login (issue #120), not at registration.** `register` still returns real, immediately
-usable tokens regardless of verification status - unchanged, since the frontend's registration
-flow expects to land the user straight in the app. `POST /api/auth/login` is the enforcement
-point instead: correct credentials against an unverified account get a `403 FORBIDDEN`
-("Please verify your email before logging in."), not the `200` a verified account gets - a
-deliberately distinct response from the `401` "wrong email or password" case, since these
-credentials genuinely are correct. Not counted against `LoginRateLimiter` either - that exists to
-slow down credential-guessing, not to penalize a real, correctly-authenticated user.
+**Enforced at both registration and login (issue #120).** `register` no longer returns any tokens -
+just `{ message }` confirming the account was created and that a verification email was sent.
+`POST /api/auth/login` is the actual enforcement point: correct credentials against an unverified
+account get a `403 FORBIDDEN` ("Please verify your email before logging in."), not the `200` a
+verified account gets - a deliberately distinct response from the `401` "wrong email or password"
+case, since these credentials genuinely are correct. Not counted against `LoginRateLimiter` either
+- that exists to slow down credential-guessing, not to penalize a real, correctly-authenticated
+user.
+
+(An earlier version of this enforcement kept `register`'s auto-login and only gated `login` -
+reconsidered almost immediately, before it shipped further, once it was clear that auto-logging
+into an account that then couldn't log back in again without verifying first was a confusing
+half-measure, not a real feature. The frontend's registration flow needs a matching update -
+tracked as its own cross-linked issue, frontend#75 - since it currently expects `register` to log
+the user straight into the dashboard.)
 
 Since the original verification token is single-use and only valid 7 days, `POST
 /api/auth/resend-verification` (email in, always `200` whether or not the account exists or is

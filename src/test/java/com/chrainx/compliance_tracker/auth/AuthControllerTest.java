@@ -14,6 +14,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -63,17 +64,17 @@ class AuthControllerTest {
     }
 
     @Test
-    void register_savesNewUser_andReturnsAToken() {
+    void register_savesNewUser_andDoesNotReturnUsableTokens() {
+        // Issue #120 (expanded scope): register used to return real, immediately usable tokens -
+        // it no longer does, since an unverified account can't log in anyway now (login itself
+        // enforces verification, see the login_* tests below). Just a confirmation message.
         when(userRepository.findByEmail("new@example.com")).thenReturn(Optional.empty());
 
         ResponseEntity<?> response = controller.register(new AuthRequest("new@example.com", "password123"));
 
         assertEquals(200, response.getStatusCode().value());
-        assertNotNull(authBody(response).token());
-        assertEquals("new@example.com", jwtService.extractEmail(authBody(response).token()));
-        assertFalse(jwtService.isRefreshToken(authBody(response).token()));
-        assertNotNull(authBody(response).refreshToken());
-        assertTrue(jwtService.isRefreshToken(authBody(response).refreshToken()));
+        assertNotNull(((RegistrationResponse) response.getBody()).message());
+        verify(userRepository).save(argThat(user -> user.getEmail().equals("new@example.com")));
     }
 
     @Test
