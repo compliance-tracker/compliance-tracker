@@ -10,32 +10,40 @@ import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Component;
 
 // Real AuthEmailSender (issue #37, extended #36), same JavaMailSender/notifications.channel=email
-// opt-in as EmailNotificationSender. Sends the raw token itself, not a link to a frontend page -
-// neither a reset-password nor a verify-email page exists yet (frontend follow-up, not built as
-// part of these backend-only issues), so a clickable link would point nowhere real.
+// opt-in as EmailNotificationSender.
+//
+// sendPasswordResetEmail sends a real clickable link now (frontend issue #55, the reset-password
+// UI, is done - it reads its token straight from the URL's ?token= query param, see
+// ResetPasswordPage.tsx). sendVerificationEmail still sends the raw token as plain text, not a
+// link - frontend issue #56 (the verify-email UI) is filed but not built yet, so a link would
+// point nowhere real. Update sendVerificationEmail the same way once #56 lands.
 @Component
 @ConditionalOnProperty(prefix = "notifications", name = "channel", havingValue = "email")
 public class EmailAuthEmailSender implements AuthEmailSender {
 
     private final JavaMailSender mailSender;
     private final String fromAddress;
+    private final String frontendUrl;
 
     @Autowired
-    public EmailAuthEmailSender(JavaMailSender mailSender, @Value("${notifications.email-from}") String fromAddress) {
+    public EmailAuthEmailSender(JavaMailSender mailSender, @Value("${notifications.email-from}") String fromAddress,
+                                 @Value("${app.frontend-url}") String frontendUrl) {
         this.mailSender = mailSender;
         this.fromAddress = fromAddress;
+        this.frontendUrl = frontendUrl;
     }
 
     @Override
     public void sendPasswordResetEmail(String toEmail, String resetToken) {
+        String resetLink = frontendUrl + "/reset-password?token=" + resetToken;
         sendPlainTextEmail(toEmail, "Reset your Compliance Tracker password", """
                 A password reset was requested for this account.
 
-                Reset token: %s
+                Reset your password: %s
 
                 If you didn't request this, you can safely ignore this email - your \
-                password won't change unless this token is actually used.
-                """.formatted(resetToken));
+                password won't change unless this link is actually used.
+                """.formatted(resetLink));
     }
 
     @Override
