@@ -148,4 +148,56 @@ class RuleEngineTest {
         assertTrue(workPassDueDates.contains(LocalDate.of(2026, 9, 1)));
         assertTrue(workPassDueDates.contains(LocalDate.of(2027, 3, 15)));
     }
+
+    // firstFinancialYearExceedsAcraLimit (issue #31) - sourced from Companies Act 1967 s.198 +
+    // ACRA's FYE guidance: a company's first financial year may run up to 18 months from
+    // incorporation before needing ACRA's special approval.
+
+    @Test
+    void firstFinancialYear_withinEighteenMonths_doesNotExceedTheLimit() {
+        // Incorporated 2026-01-15, first FYE 2026-12-31 - about 11.5 months, a completely
+        // ordinary choice.
+        assertFalse(ruleEngine.firstFinancialYearExceedsAcraLimit(
+                LocalDate.of(2026, 1, 15), LocalDate.of(2026, 12, 31)));
+    }
+
+    @Test
+    void firstFinancialYear_exactlyEighteenMonths_doesNotExceedTheLimit() {
+        // The boundary itself is allowed - only strictly *more* than 18 months needs approval.
+        LocalDate incorporationDate = LocalDate.of(2026, 1, 15);
+        assertFalse(ruleEngine.firstFinancialYearExceedsAcraLimit(
+                incorporationDate, incorporationDate.plusMonths(18)));
+    }
+
+    @Test
+    void firstFinancialYear_beyondEighteenMonths_exceedsTheLimit() {
+        // Incorporated 2026-01-15, "first" FYE claimed as 2027-12-31 - almost 24 months, well
+        // past what ACRA allows without special approval.
+        assertTrue(ruleEngine.firstFinancialYearExceedsAcraLimit(
+                LocalDate.of(2026, 1, 15), LocalDate.of(2027, 12, 31)));
+    }
+
+    @Test
+    void firstFinancialYear_oneDayBeyondEighteenMonths_exceedsTheLimit() {
+        LocalDate incorporationDate = LocalDate.of(2026, 1, 15);
+        assertTrue(ruleEngine.firstFinancialYearExceedsAcraLimit(
+                incorporationDate, incorporationDate.plusMonths(18).plusDays(1)));
+    }
+
+    // A "nearest occurrence of this month/day" version of this method was tried first, to avoid
+    // a *different* false positive (a years-old business's stored financialYearEnd could hold
+    // any past/future year, since only its month/day is ever actually used elsewhere in the
+    // app). That version was itself wrong: the nearest occurrence of any month/day is always
+    // within ~12 months of any starting date, so it could never register an 18-month violation
+    // at all - caught by this exact test failing against that implementation, not spotted by
+    // inspection. This method is only ever called from createBusiness (see that method's own
+    // comment) - a brand new business, where financialYearEnd unambiguously *is* the literal
+    // first FYE being declared, not some later cycle's date - so literal subtraction is correct
+    // there, not a bug needing "nearest occurrence" protection against a scenario that can't
+    // arise at the one call site that exists.
+    @Test
+    void financialYearEndFarInTheFuture_correctlyExceedsTheLimit() {
+        assertTrue(ruleEngine.firstFinancialYearExceedsAcraLimit(
+                LocalDate.of(2021, 1, 1), LocalDate.of(2029, 12, 31)));
+    }
 }

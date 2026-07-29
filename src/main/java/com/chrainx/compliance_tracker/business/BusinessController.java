@@ -58,13 +58,19 @@ public class BusinessController {
     // business" attempt and resends the same key on retry gets the original business back
     // instead of a second one.
     @PostMapping
-    public BusinessResponse createBusiness(@Valid @RequestBody BusinessRequest request,
-                                            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
-                                            @AuthenticationPrincipal User currentUser) {
+    public ResponseEntity<?> createBusiness(@Valid @RequestBody BusinessRequest request,
+                                             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+                                             @AuthenticationPrincipal User currentUser) {
+        if (exceedsFirstYearAcraLimit(request)) {
+            return ResponseEntity.status(400).body(new ApiError("BAD_REQUEST",
+                    "For a first financial year, financialYearEnd cannot be more than 18 months after incorporationDate."));
+        }
+
         if (idempotencyKey != null) {
             Optional<IdempotencyKey> existing = idempotencyKeyRepository.findByKeyAndOwnerId(idempotencyKey, currentUser.getId());
             if (existing.isPresent()) {
-                return BusinessResponse.from(businessRepository.findById(existing.get().getBusinessId()).orElseThrow());
+                return ResponseEntity.ok(
+                        BusinessResponse.from(businessRepository.findById(existing.get().getBusinessId()).orElseThrow()));
             }
         }
 
@@ -76,6 +82,7 @@ public class BusinessController {
         // behavior) when the client doesn't send one, same idiom as Business.leadTimeDays' own
         // Java-side default.
         business.setLeadTimeDays(request.leadTimeDays() != null ? request.leadTimeDays() : 14);
+        business.setIncorporationDate(request.incorporationDate());
         business.setOwner(currentUser);
         business = businessRepository.save(business);
 
@@ -83,7 +90,15 @@ public class BusinessController {
             business = claimIdempotencyKeyOrReturnTheWinners(idempotencyKey, currentUser.getId(), business);
         }
 
-        return BusinessResponse.from(business);
+        return ResponseEntity.ok(BusinessResponse.from(business));
+    }
+
+    // Cross-field, so it can't be a Bean Validation annotation on BusinessRequest itself (same
+    // reasoning as AuthController.isTooWeak) - only meaningful when incorporationDate is
+    // actually present, since a business that's never set one has nothing to check against.
+    private boolean exceedsFirstYearAcraLimit(BusinessRequest request) {
+        return request.incorporationDate() != null
+                && ruleEngine.firstFinancialYearExceedsAcraLimit(request.incorporationDate(), request.financialYearEnd());
     }
 
     // The lookup above isn't atomic with this insert - two concurrent requests carrying the same
@@ -154,6 +169,15 @@ public class BusinessController {
         }
 
         Business business = existing.get();
+
+        // Deliberately NOT re-running exceedsFirstYearAcraLimit here, unlike createBusiness -
+        // that check only means something at the moment a first FYE is actually being declared
+        // for a brand new business. Once a business exists, its financialYearEnd could
+        // legitimately represent any later, unrelated annual cycle - re-validating it against
+        // incorporationDate on every future edit would risk flagging a perfectly normal update
+        // to a long-standing business as a "first year" violation it has nothing to do with.
+        // Changing an existing FYE has its own (different, ≤12-months-normally,
+        // ≤18-with-approval) rule, not modeled yet (issue #30) - not the same check.
         business.setName(request.name());
         business.setFinancialYearEnd(request.financialYearEnd());
         business.setGstRegistered(request.gstRegistered());
@@ -163,6 +187,10 @@ public class BusinessController {
         // previously customized through some other client (e.g. a direct API call).
         if (request.leadTimeDays() != null) {
             business.setLeadTimeDays(request.leadTimeDays());
+        }
+        // Same preserve-if-omitted pattern as leadTimeDays, and for the same reason.
+        if (request.incorporationDate() != null) {
+            business.setIncorporationDate(request.incorporationDate());
         }
 
         return ResponseEntity.ok(BusinessResponse.from(businessRepository.save(business)));

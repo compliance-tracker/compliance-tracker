@@ -52,8 +52,8 @@ Gradle convention, and it kept import parity easy to check while doing the split
 ## Domain layer
 
 - **`Business`** — entity representing an SME and the parameters its compliance deadlines are
-  computed from (`name`, `financialYearEnd`, `gstRegistered`, `leadTimeDays`). Never bound
-  directly from a request or serialized directly into a response (issue #46) —
+  computed from (`name`, `financialYearEnd`, `gstRegistered`, `leadTimeDays`, `incorporationDate`).
+  Never bound directly from a request or serialized directly into a response (issue #46) —
   `BusinessRequest`/`BusinessResponse` are the API's actual contract; this is purely the
   persistence shape.
 - **`BusinessRequest`** / **`BusinessResponse`** — the API's actual contract for a business
@@ -79,7 +79,22 @@ Gradle convention, and it kept import parity easy to check while doing the split
   (each an `ObligationType` + due `LocalDate`). Has no dependency on the database or HTTP layer,
   and takes the reference date as a parameter rather than calling `LocalDate.now()` internally,
   so tests are fully deterministic. Implements all three obligations: ACRA Annual Return, GST
-  F5, and Employment Pass renewal (one deadline per `WorkPass`).
+  F5, and Employment Pass renewal (one deadline per `WorkPass`). Also exposes
+  `firstFinancialYearExceedsAcraLimit(incorporationDate, financialYearEnd)` (issue #31, sourced
+  from Companies Act 1967 s.198) — a validation helper, not a deadline computation; a plain
+  literal-date comparison (`financialYearEnd.isAfter(incorporationDate.plusMonths(18))`), only
+  ever called from `BusinessController.createBusiness`. It's deliberately *not* called from
+  `updateBusiness`: `financialYearEnd` is stored as a single date but stands for "this month/day,
+  every year" once a business has real history (see `nextAcraDeadline`'s own comment) — comparing
+  an *existing* business's current `financialYearEnd` against its `incorporationDate` on every
+  future edit would eventually flag a perfectly normal multi-year-old business's routine update
+  as an illegal first year. The check only means something at the one moment a first FYE is
+  actually being declared for a business that doesn't exist yet. An earlier implementation tried
+  to search for the "nearest occurrence" of the FYE month/day instead, specifically to dodge that
+  same false positive on updates — that version was itself wrong (the nearest occurrence of any
+  month/day is always within ~12 months of any date, so it could never register an 18-month
+  violation at all) and was caught by its own test suite failing, not spotted by inspection. See
+  `RuleEngineTest`'s comment above that test for the full story.
 
 ## Web layer
 
@@ -91,7 +106,8 @@ Gradle convention, and it kept import parity easy to check while doing the split
   deadlines via `RuleEngine`, including any work-pass renewals) over HTTP. `updateBusiness` never
   saves the client-supplied request DTO directly — only copies its fields onto the already-fetched,
   already-owned entity. `createBusiness` also accepts an optional `Idempotency-Key` header
-  (issue #61) — see `IdempotencyKey` below.
+  (issue #61) — see `IdempotencyKey` below — and is the only place the first-year 18-month check
+  (issue #31, see `RuleEngine` above) ever runs.
 - **`PageResponse<T>`** — a small custom pagination envelope (issue #49; `content`, `page`,
   `size`, `totalElements`, `totalPages`), used by `GET /api/businesses` and
   `GET /api/businesses/{id}/work-passes`. Deliberately not Spring Data's own `Page<T>` serialized

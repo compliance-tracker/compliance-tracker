@@ -28,6 +28,13 @@ public class Business {
     // migration's column default, every row that existed before this field did.
     private int leadTimeDays = 14;
 
+    // When this business was incorporated (issue #31) - nullable, unlike every other field here,
+    // since there's no honest default and plenty of existing businesses will never set it. Its
+    // only current use is validating financialYearEnd against the Companies Act's first-year
+    // 18-month cap (see BusinessController) - a business that never sets it just skips that
+    // check, same as before this field existed.
+    private LocalDate incorporationDate;
+
     // FetchType.LAZY + @JsonIgnore: the owning User (including their password hash) must never
     // be serialized into an API response - the frontend has no need to see it, and leaking a
     // password hash through a JSON response would be a real security bug, not just untidy.
@@ -51,6 +58,9 @@ public class Business {
 
     public int getLeadTimeDays() { return leadTimeDays; }
     public void setLeadTimeDays(int leadTimeDays) { this.leadTimeDays = leadTimeDays; }
+
+    public LocalDate getIncorporationDate() { return incorporationDate; }
+    public void setIncorporationDate(LocalDate incorporationDate) { this.incorporationDate = incorporationDate; }
 
     public User getOwner() { return owner; }
     public void setOwner(User owner) { this.owner = owner; }

@@ -8,10 +8,11 @@ import java.time.LocalDate;
 // entity. This already caused one near-miss: Business.owner needed @JsonIgnore or it would have
 // serialized a whole User - including their password hash - straight into every response.
 public record BusinessResponse(
-        Long id, String name, LocalDate financialYearEnd, boolean gstRegistered, int leadTimeDays) {
+        Long id, String name, LocalDate financialYearEnd, boolean gstRegistered, int leadTimeDays,
+        LocalDate incorporationDate) {
 
     public static BusinessResponse from(Business business) {
         return new BusinessResponse(business.getId(), business.getName(), business.getFinancialYearEnd(),
-                business.isGstRegistered(), business.getLeadTimeDays());
+                business.isGstRegistered(), business.getLeadTimeDays(), business.getIncorporationDate());
     }
 }

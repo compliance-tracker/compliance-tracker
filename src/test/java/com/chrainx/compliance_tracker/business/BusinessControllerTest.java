@@ -127,12 +127,12 @@ class BusinessControllerTest {
 
     @Test
     void createBusiness_setsOwnerToCurrentUser() {
-        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, null);
+        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, null, null);
         when(businessRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        BusinessResponse response = controller.createBusiness(request, null, currentUser);
+        ResponseEntity<?> response = controller.createBusiness(request, null, currentUser);
 
-        assertEquals("Test Co", response.name());
+        assertEquals("Test Co", businessBody(response).name());
     }
 
     @Test
@@ -140,7 +140,7 @@ class BusinessControllerTest {
         // The header is entirely opt-in (issue #61) - an existing caller that never sends it
         // must see zero behavior change, not just "the same result" but literally no extra
         // queries against a table it doesn't know exists.
-        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, null);
+        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, null, null);
         when(businessRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         controller.createBusiness(request, null, currentUser);
@@ -150,16 +150,16 @@ class BusinessControllerTest {
 
     @Test
     void createBusiness_withNewIdempotencyKey_createsABusiness_andRecordsTheKey() {
-        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, null);
+        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, null, null);
         Business saved = new Business();
         saved.setId(5L);
         saved.setName("Test Co");
         when(idempotencyKeyRepository.findByKeyAndOwnerId("key-123", 1L)).thenReturn(Optional.empty());
         when(businessRepository.save(any())).thenReturn(saved);
 
-        BusinessResponse response = controller.createBusiness(request, "key-123", currentUser);
+        ResponseEntity<?> response = controller.createBusiness(request, "key-123", currentUser);
 
-        assertEquals(5L, response.id());
+        assertEquals(5L, businessBody(response).id());
         verify(idempotencyKeyRepository).save(argThat(record ->
                 record.getKey().equals("key-123") && record.getOwnerId().equals(1L) && record.getBusinessId().equals(5L)));
     }
@@ -177,10 +177,10 @@ class BusinessControllerTest {
         when(idempotencyKeyRepository.findByKeyAndOwnerId("key-123", 1L)).thenReturn(Optional.of(existingKey));
         when(businessRepository.findById(5L)).thenReturn(Optional.of(original));
 
-        BusinessRequest retriedRequest = new BusinessRequest("Original Co", LocalDate.of(2026, 12, 31), false, null);
-        BusinessResponse response = controller.createBusiness(retriedRequest, "key-123", currentUser);
+        BusinessRequest retriedRequest = new BusinessRequest("Original Co", LocalDate.of(2026, 12, 31), false, null, null);
+        ResponseEntity<?> response = controller.createBusiness(retriedRequest, "key-123", currentUser);
 
-        assertEquals(5L, response.id());
+        assertEquals(5L, businessBody(response).id());
         verify(businessRepository, never()).save(any());
     }
 
@@ -191,22 +191,22 @@ class BusinessControllerTest {
 
     @Test
     void createBusiness_defaultsLeadTimeDaysTo14_whenOmittedFromTheRequest() {
-        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, null);
+        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, null, null);
         when(businessRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        BusinessResponse response = controller.createBusiness(request, null, currentUser);
+        ResponseEntity<?> response = controller.createBusiness(request, null, currentUser);
 
-        assertEquals(14, response.leadTimeDays());
+        assertEquals(14, businessBody(response).leadTimeDays());
     }
 
     @Test
     void createBusiness_usesTheGivenLeadTimeDays_whenPresent() {
-        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, 30);
+        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, 30, null);
         when(businessRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        BusinessResponse response = controller.createBusiness(request, null, currentUser);
+        ResponseEntity<?> response = controller.createBusiness(request, null, currentUser);
 
-        assertEquals(30, response.leadTimeDays());
+        assertEquals(30, businessBody(response).leadTimeDays());
     }
 
     @Test
@@ -215,7 +215,7 @@ class BusinessControllerTest {
         existing.setId(1L);
         existing.setLeadTimeDays(30);
 
-        BusinessRequest request = new BusinessRequest("New Name", LocalDate.of(2027, 6, 30), true, null);
+        BusinessRequest request = new BusinessRequest("New Name", LocalDate.of(2027, 6, 30), true, null, null);
 
         when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(existing));
         when(businessRepository.save(existing)).thenReturn(existing);
@@ -231,7 +231,7 @@ class BusinessControllerTest {
         existing.setId(1L);
         existing.setLeadTimeDays(14);
 
-        BusinessRequest request = new BusinessRequest("New Name", LocalDate.of(2027, 6, 30), true, 7);
+        BusinessRequest request = new BusinessRequest("New Name", LocalDate.of(2027, 6, 30), true, 7, null);
 
         when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(existing));
         when(businessRepository.save(existing)).thenReturn(existing);
@@ -239,6 +239,79 @@ class BusinessControllerTest {
         ResponseEntity<?> response = controller.updateBusiness(1L, request, currentUser);
 
         assertEquals(7, businessBody(response).leadTimeDays());
+    }
+
+    // incorporationDate (issue #31) - the 18-month first-FYE check only ever runs in
+    // createBusiness, per RuleEngine.firstFinancialYearExceedsAcraLimit's own comment on why
+    // re-checking it on every update would be wrong.
+
+    @Test
+    void createBusiness_withNoIncorporationDate_skipsTheEighteenMonthCheck() {
+        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, null, null);
+        when(businessRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        ResponseEntity<?> response = controller.createBusiness(request, null, currentUser);
+
+        assertEquals(200, response.getStatusCode().value());
+    }
+
+    @Test
+    void createBusiness_withFirstFyeWithinEighteenMonths_succeeds() {
+        BusinessRequest request = new BusinessRequest(
+                "Test Co", LocalDate.of(2026, 12, 31), false, null, LocalDate.of(2026, 1, 15));
+        when(businessRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        ResponseEntity<?> response = controller.createBusiness(request, null, currentUser);
+
+        assertEquals(200, response.getStatusCode().value());
+        assertEquals(LocalDate.of(2026, 1, 15), businessBody(response).incorporationDate());
+    }
+
+    @Test
+    void createBusiness_withFirstFyeBeyondEighteenMonths_isRejectedWith400() {
+        BusinessRequest request = new BusinessRequest(
+                "Test Co", LocalDate.of(2027, 12, 31), false, null, LocalDate.of(2026, 1, 15));
+
+        ResponseEntity<?> response = controller.createBusiness(request, null, currentUser);
+
+        assertEquals(400, response.getStatusCode().value());
+        verify(businessRepository, never()).save(any());
+    }
+
+    @Test
+    void updateBusiness_leavesIncorporationDateUnchanged_whenOmittedFromTheRequest() {
+        Business existing = new Business();
+        existing.setId(1L);
+        existing.setIncorporationDate(LocalDate.of(2020, 1, 1));
+
+        BusinessRequest request = new BusinessRequest("New Name", LocalDate.of(2027, 6, 30), true, null, null);
+
+        when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(existing));
+        when(businessRepository.save(existing)).thenReturn(existing);
+
+        ResponseEntity<?> response = controller.updateBusiness(1L, request, currentUser);
+
+        assertEquals(LocalDate.of(2020, 1, 1), businessBody(response).incorporationDate());
+    }
+
+    @Test
+    void updateBusiness_withFinancialYearEndFarPastIncorporation_stillSucceeds() {
+        // The behavior the update-time check was deliberately dropped to avoid: a genuinely old
+        // business, whose current financialYearEnd is naturally many years past its own
+        // incorporationDate, must not get treated as if it just declared an illegal 5-year-long
+        // "first" financial year - see RuleEngine.firstFinancialYearExceedsAcraLimit's comment.
+        Business existing = new Business();
+        existing.setId(1L);
+        existing.setIncorporationDate(LocalDate.of(2018, 1, 1));
+
+        BusinessRequest request = new BusinessRequest("Old Co", LocalDate.of(2026, 12, 31), false, null, null);
+
+        when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(existing));
+        when(businessRepository.save(existing)).thenReturn(existing);
+
+        ResponseEntity<?> response = controller.updateBusiness(1L, request, currentUser);
+
+        assertEquals(200, response.getStatusCode().value());
     }
 
     @Test
@@ -261,7 +334,7 @@ class BusinessControllerTest {
         existing.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
         existing.setGstRegistered(false);
 
-        BusinessRequest request = new BusinessRequest("New Name", LocalDate.of(2027, 6, 30), true, null);
+        BusinessRequest request = new BusinessRequest("New Name", LocalDate.of(2027, 6, 30), true, null, null);
 
         when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(existing));
         when(businessRepository.save(existing)).thenReturn(existing);
@@ -279,7 +352,7 @@ class BusinessControllerTest {
         when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.empty());
 
         ResponseEntity<?> response = controller.updateBusiness(
-                1L, new BusinessRequest("Name", LocalDate.of(2026, 12, 31), false, null), currentUser);
+                1L, new BusinessRequest("Name", LocalDate.of(2026, 12, 31), false, null, null), currentUser);
 
         assertEquals(404, response.getStatusCode().value());
     }
