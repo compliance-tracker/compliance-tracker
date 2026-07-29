@@ -130,6 +130,34 @@ Gradle convention, and it kept import parity easy to check while doing the split
   pass at all.
 - **`HelloController`** — `GET /hello`, a minimal smoke-test endpoint from initial setup.
 
+## Health/readiness (issue #44)
+
+`GET /actuator/health` (plus the Kubernetes-style `/actuator/health/liveness` and
+`/actuator/health/readiness` sub-groups, `management.endpoint.health.probes.enabled=true`) is
+what a load balancer or container orchestrator would point its health/readiness checks at once
+this is ever actually deployed (#5) — `permitAll()`'d in `SecurityConfig`, since infrastructure
+checking "is this instance alive" can't attach a JWT. `management.endpoints.web.exposure.include=
+health` deliberately exposes nothing else over HTTP (no `/actuator/env`, `/actuator/beans`, etc.),
+and `show-details=never` keeps even the health response itself to a bare `{"status":"UP"}` for an
+unauthenticated caller — no leaking which DB it's checking or connection-pool internals.
+
+**A real bug found live while verifying this endpoint, not assumed:** Spring Boot
+auto-configures a `mail` health indicator the instant `spring-boot-starter-mail` is on the
+classpath (needed for `EmailNotificationSender`/`AuthEmailSender`) — it tries an actual SMTP
+connection to `smtp.gmail.com` on every health check. With this app's deliberate, safe
+zero-config default (`notifications.channel=logging`, no real Gmail credentials), that connection
+always fails, which dragged the *entire aggregate* `/actuator/health` to `DOWN` even though the
+app itself was completely healthy — exactly the false-positive a real load balancer must never
+see, since it would kill perfectly fine instances. Real email is an explicitly opt-in feature this
+app is designed to work without (see [notifications.md](notifications.md)); health/readiness has
+to reflect that, not assume every optional integration is actually configured. Fixed with
+`management.health.mail.enabled=false`.
+
+The DB connectivity check *is* left enabled and does mean something real — Spring Boot
+auto-configures it from the `DataSource` already on the classpath (`spring-boot-starter-data-jpa`),
+so readiness genuinely reflects whether the app can currently reach Postgres, not just that the
+JVM process is up.
+
 ## Reminder pipeline
 
 - **`DeadlineRecord`** — persisted counterpart to `rules.Deadline`. Adds the one thing pure

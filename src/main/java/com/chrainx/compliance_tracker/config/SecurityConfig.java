@@ -61,7 +61,13 @@ public class SecurityConfig {
                         // from the frontend would be rejected before CorsConfig's headers
                         // even get a chance to apply.
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                        .requestMatchers("/hello", "/api/auth/**", "/error").permitAll()
+                        // A load balancer/container orchestrator's health check (issue #44)
+                        // can't attach a JWT - it's not a logged-in user, just infrastructure
+                        // asking "is this instance alive/ready." Only health is actually
+                        // exposed at all (management.endpoints.web.exposure.include=health in
+                        // application.properties), so this can't accidentally open up anything
+                        // more sensitive even if that property ever widened.
+                        .requestMatchers("/hello", "/api/auth/**", "/error", "/actuator/health/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 // Runs our JwtAuthenticationFilter before Spring Security's own default
