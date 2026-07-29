@@ -29,6 +29,7 @@ explorer serve different purposes — not a duplicate to eventually delete.
 | POST   | `/api/businesses/{id}/work-passes` | Yes      | Create a work pass under that business — `400` if `employeeName` is blank or `expiryDate` is missing, `404` if the business doesn't exist or isn't yours |
 | GET    | `/api/businesses/{id}/work-passes` | Yes      | List work passes for that business, paginated (issue #49) — 404 if it doesn't exist or isn't yours |
 | DELETE | `/api/businesses/{id}/work-passes/{workPassId}` | Yes | Remove a work pass — 404 if either the business or the pass doesn't exist/belong to the caller |
+| GET    | `/api/notifications/status`   | Yes            | Read-only status of the active `NotificationSender`/`AuthEmailSender` channel (issue #114) — `{"channel":"logging"}` or `{"channel":"email","fromAddress":"..."}`. Reflects real server-side config, not anything per-user; requires auth like the rest of the API, not `permitAll()`'d like `/actuator/health` |
 
 ## Errors
 
