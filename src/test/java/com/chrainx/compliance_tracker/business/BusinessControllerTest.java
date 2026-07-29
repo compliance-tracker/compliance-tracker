@@ -127,7 +127,7 @@ class BusinessControllerTest {
 
     @Test
     void createBusiness_setsOwnerToCurrentUser() {
-        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false);
+        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, null);
         when(businessRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         BusinessResponse response = controller.createBusiness(request, null, currentUser);
@@ -140,7 +140,7 @@ class BusinessControllerTest {
         // The header is entirely opt-in (issue #61) - an existing caller that never sends it
         // must see zero behavior change, not just "the same result" but literally no extra
         // queries against a table it doesn't know exists.
-        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false);
+        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, null);
         when(businessRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         controller.createBusiness(request, null, currentUser);
@@ -150,7 +150,7 @@ class BusinessControllerTest {
 
     @Test
     void createBusiness_withNewIdempotencyKey_createsABusiness_andRecordsTheKey() {
-        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false);
+        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, null);
         Business saved = new Business();
         saved.setId(5L);
         saved.setName("Test Co");
@@ -177,11 +177,68 @@ class BusinessControllerTest {
         when(idempotencyKeyRepository.findByKeyAndOwnerId("key-123", 1L)).thenReturn(Optional.of(existingKey));
         when(businessRepository.findById(5L)).thenReturn(Optional.of(original));
 
-        BusinessRequest retriedRequest = new BusinessRequest("Original Co", LocalDate.of(2026, 12, 31), false);
+        BusinessRequest retriedRequest = new BusinessRequest("Original Co", LocalDate.of(2026, 12, 31), false, null);
         BusinessResponse response = controller.createBusiness(retriedRequest, "key-123", currentUser);
 
         assertEquals(5L, response.id());
         verify(businessRepository, never()).save(any());
+    }
+
+    // leadTimeDays (issue #53) is optional on the request - these three tests prove
+    // createBusiness/updateBusiness handle its absence differently on purpose (see the
+    // controller's own comments): create defaults to 14, update preserves whatever the business
+    // already had rather than silently resetting it.
+
+    @Test
+    void createBusiness_defaultsLeadTimeDaysTo14_whenOmittedFromTheRequest() {
+        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, null);
+        when(businessRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        BusinessResponse response = controller.createBusiness(request, null, currentUser);
+
+        assertEquals(14, response.leadTimeDays());
+    }
+
+    @Test
+    void createBusiness_usesTheGivenLeadTimeDays_whenPresent() {
+        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, 30);
+        when(businessRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        BusinessResponse response = controller.createBusiness(request, null, currentUser);
+
+        assertEquals(30, response.leadTimeDays());
+    }
+
+    @Test
+    void updateBusiness_leavesLeadTimeDaysUnchanged_whenOmittedFromTheRequest() {
+        Business existing = new Business();
+        existing.setId(1L);
+        existing.setLeadTimeDays(30);
+
+        BusinessRequest request = new BusinessRequest("New Name", LocalDate.of(2027, 6, 30), true, null);
+
+        when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(existing));
+        when(businessRepository.save(existing)).thenReturn(existing);
+
+        ResponseEntity<?> response = controller.updateBusiness(1L, request, currentUser);
+
+        assertEquals(30, businessBody(response).leadTimeDays());
+    }
+
+    @Test
+    void updateBusiness_updatesLeadTimeDays_whenPresent() {
+        Business existing = new Business();
+        existing.setId(1L);
+        existing.setLeadTimeDays(14);
+
+        BusinessRequest request = new BusinessRequest("New Name", LocalDate.of(2027, 6, 30), true, 7);
+
+        when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(existing));
+        when(businessRepository.save(existing)).thenReturn(existing);
+
+        ResponseEntity<?> response = controller.updateBusiness(1L, request, currentUser);
+
+        assertEquals(7, businessBody(response).leadTimeDays());
     }
 
     @Test
@@ -204,7 +261,7 @@ class BusinessControllerTest {
         existing.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
         existing.setGstRegistered(false);
 
-        BusinessRequest request = new BusinessRequest("New Name", LocalDate.of(2027, 6, 30), true);
+        BusinessRequest request = new BusinessRequest("New Name", LocalDate.of(2027, 6, 30), true, null);
 
         when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(existing));
         when(businessRepository.save(existing)).thenReturn(existing);
@@ -222,7 +279,7 @@ class BusinessControllerTest {
         when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.empty());
 
         ResponseEntity<?> response = controller.updateBusiness(
-                1L, new BusinessRequest("Name", LocalDate.of(2026, 12, 31), false), currentUser);
+                1L, new BusinessRequest("Name", LocalDate.of(2026, 12, 31), false, null), currentUser);
 
         assertEquals(404, response.getStatusCode().value());
     }

@@ -52,15 +52,20 @@ Gradle convention, and it kept import parity easy to check while doing the split
 ## Domain layer
 
 - **`Business`** — entity representing an SME and the parameters its compliance deadlines are
-  computed from (`name`, `financialYearEnd`, `gstRegistered`). Never bound directly from a
-  request or serialized directly into a response (issue #46) — `BusinessRequest`/
-  `BusinessResponse` are the API's actual contract; this is purely the persistence shape.
+  computed from (`name`, `financialYearEnd`, `gstRegistered`, `leadTimeDays`). Never bound
+  directly from a request or serialized directly into a response (issue #46) —
+  `BusinessRequest`/`BusinessResponse` are the API's actual contract; this is purely the
+  persistence shape.
 - **`BusinessRequest`** / **`BusinessResponse`** — the API's actual contract for a business
   (issue #46), separate from the JPA entity. `BusinessRequest` carries the Bean Validation
   annotations (`@NotBlank`/`@NotNull`, issue #20) and deliberately has no `id`/`owner` field at
   all — not just fields a controller has to remember to clear — so the #66-style IDOR (a client
   supplying their own `id`, JPA's `save()` silently doing an `UPDATE` instead of an `INSERT`) is
-  structurally impossible, not just defended against.
+  structurally impossible, not just defended against. `leadTimeDays` (issue #53) is a boxed
+  `Integer` on the request specifically so it can be optional (`@Min(1) @Max(90)` when present,
+  no `@NotNull`) — `createBusiness` defaults a missing value to `14`, `updateBusiness` leaves the
+  business's existing value untouched rather than resetting it, so a client that doesn't know
+  about the field yet (the current frontend) never has to send it.
 - **`BusinessRepository`** — Spring Data JPA repository interface. Extending `JpaRepository`
   gives `save`/`findAll`/`findById`/etc. for free, with no method bodies written — Spring
   generates the implementation at runtime.
@@ -115,15 +120,19 @@ Gradle convention, and it kept import parity easy to check while doing the split
   computation can't carry: state, specifically `reminderSent`. `rules.Deadline` itself stays
   a pure in-memory value with no DB knowledge.
 - **`DeadlineRecordRepository`** — Spring Data JPA repository for `DeadlineRecord`, including
-  `existsByBusinessIdAndObligationTypeAndDueDate` (dedupe check) and
-  `findByReminderSentFalseAndDueDateLessThanEqual` (the "what needs a reminder" query).
+  `existsByBusinessIdAndObligationTypeAndDueDate` (dedupe check) and `findByReminderSentFalse`
+  (the starting point for the "what needs a reminder" query — see `findDueSoonAndUnreminded`
+  below for why the actual due-date cutoff isn't part of this query anymore).
 - **`DeadlineSyncService`** — `@Service` with a `@Scheduled` method (`syncDeadlines`, daily at
   01:00 Singapore time — `zone = "Asia/Singapore"` explicitly, issue #28, not the server's own
   default timezone) that recomputes every business's deadlines from scratch via `RuleEngine` each run and
   persists any not already stored, skipping ones that already exist so `reminderSent` isn't
-  reset. Also exposes `findDueSoonAndUnreminded(referenceDate, daysAhead)`, which the dispatch
-  step (`SqsDispatchService`) calls next to decide what actually gets pushed to the reminder
-  queue.
+  reset. Also exposes `findDueSoonAndUnreminded(referenceDate)`, which the dispatch step
+  (`SqsDispatchService`) calls next to decide what actually gets pushed to the reminder queue —
+  "due soon" is evaluated per-record against that record's own `business.leadTimeDays` (issue
+  #53), not a single global window, so it's `@Transactional(readOnly = true)`: `Business` is a
+  lazy relationship on `DeadlineRecord`, and reading `leadTimeDays` off it during the filtering
+  needs the Hibernate session kept open past the initial repository call.
 - **`SqsConfig`** — `@Configuration` producing a single `SqsClient` `@Bean`. When
   `aws.sqs.endpoint` is set (local dev), it points the client at LocalStack with throwaway
   credentials; when unset (real AWS deployment), it falls back to the SDK's default credential
@@ -132,8 +141,10 @@ Gradle convention, and it kept import parity easy to check while doing the split
   constructor/getters/equals/hashCode) representing one reminder's JSON payload:
   `deadlineRecordId`, `businessId`, `obligationType`, `dueDate`.
 - **`SqsDispatchService`** — `@Service` with a `@Scheduled` method (`scheduledDispatch`, daily at
-  01:15 Singapore time, 15 minutes after the sync job — same explicit `zone` as above) that calls `findDueSoonAndUnreminded`, serializes each
-  result to JSON via Jackson, and sends it as an SQS message. Deliberately does **not** mark
+  01:15 Singapore time, 15 minutes after the sync job — same explicit `zone` as above) that calls
+  `findDueSoonAndUnreminded` (no longer takes a `daysAhead` parameter, issue #53 — there's no
+  single global lookahead left to pass), serializes each result to JSON via Jackson, and sends it
+  as an SQS message. Deliberately does **not** mark
   `reminderSent` — that only happens in the worker, below, after a reminder is actually sent
   successfully, so a lost/failed message can still be retried rather than silently skipped.
   Verified with a real integration test (`SqsDispatchIntegrationTest`) that boots the full app

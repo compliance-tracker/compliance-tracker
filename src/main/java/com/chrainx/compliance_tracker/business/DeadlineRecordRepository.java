@@ -15,6 +15,9 @@ public interface DeadlineRecordRepository extends JpaRepository<DeadlineRecord, 
     // this project (see README known limitations).
     boolean existsByBusinessIdAndObligationTypeAndDueDate(Long businessId, ObligationType obligationType, LocalDate dueDate);
 
-    // The actual "what needs a reminder right now" query the scheduler/dispatcher reads from.
-    List<DeadlineRecord> findByReminderSentFalseAndDueDateLessThanEqual(LocalDate cutoff);
+    // The starting point for the scheduler/dispatcher's "what needs a reminder right now" query.
+    // Deliberately not filtered by due date here (issue #53) - since each business now has its
+    // own leadTimeDays, there's no single cutoff this query could apply; DeadlineSyncService
+    // filters per-record against its own business's leadTimeDays instead.
+    List<DeadlineRecord> findByReminderSentFalse();
 }

@@ -5,6 +5,7 @@ import com.chrainx.compliance_tracker.rules.RuleEngine;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -70,8 +71,24 @@ public class DeadlineSyncService {
         }
     }
 
-    public List<DeadlineRecord> findDueSoonAndUnreminded(LocalDate referenceDate, int daysAhead) {
-        LocalDate cutoff = referenceDate.plusDays(daysAhead);
-        return deadlineRecordRepository.findByReminderSentFalseAndDueDateLessThanEqual(cutoff);
+    // "Due soon" is now per-business (issue #53) - each DeadlineRecord's own business.leadTimeDays
+    // decides how far ahead it counts as due soon, replacing the single global window every
+    // business used to share. Filtered in Java, not SQL - a per-row cutoff computed from a
+    // joined column isn't expressible as a plain Spring Data derived query, and this project's
+    // scale doesn't need anything fancier (see findByReminderSentFalse's own comment).
+    //
+    // @Transactional(readOnly = true): Business is a lazy (@ManyToOne(fetch = FetchType.LAZY))
+    // relationship on DeadlineRecord - without an open Hibernate session, accessing
+    // record.getBusiness().getLeadTimeDays() below throws LazyInitializationException the
+    // moment the filter runs, because a plain (non-transactional) repository call's session
+    // closes as soon as findByReminderSentFalse() itself returns, before the .stream() that
+    // reads each record's business ever executes. Found live running the real integration tests
+    // (SqsDispatchIntegrationTest/ReminderWorkerIntegrationTest), not assumed - readOnly since
+    // this method never writes anything.
+    @Transactional(readOnly = true)
+    public List<DeadlineRecord> findDueSoonAndUnreminded(LocalDate referenceDate) {
+        return deadlineRecordRepository.findByReminderSentFalse().stream()
+                .filter(record -> !record.getDueDate().isAfter(referenceDate.plusDays(record.getBusiness().getLeadTimeDays())))
+                .toList();
     }
 }

@@ -22,6 +22,12 @@ public class Business {
 
     private boolean gstRegistered;
 
+    // How many days before a deadline SqsDispatchService should send a reminder for it (issue
+    // #53) - used to be a single hardcoded 14 for every business. Defaults to 14 (matching the
+    // old hardcoded behavior) for both a freshly-constructed entity in Java and, via the V8
+    // migration's column default, every row that existed before this field did.
+    private int leadTimeDays = 14;
+
     // FetchType.LAZY + @JsonIgnore: the owning User (including their password hash) must never
     // be serialized into an API response - the frontend has no need to see it, and leaking a
     // password hash through a JSON response would be a real security bug, not just untidy.
@@ -42,6 +48,9 @@ public class Business {
 
     public boolean isGstRegistered() { return gstRegistered; }
     public void setGstRegistered(boolean gstRegistered) { this.gstRegistered = gstRegistered; }
+
+    public int getLeadTimeDays() { return leadTimeDays; }
+    public void setLeadTimeDays(int leadTimeDays) { this.leadTimeDays = leadTimeDays; }
 
     public User getOwner() { return owner; }
     public void setOwner(User owner) { this.owner = owner; }
