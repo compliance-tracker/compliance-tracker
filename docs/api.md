@@ -14,8 +14,9 @@ explorer serve different purposes — not a duplicate to eventually delete.
 |--------|-------------------------------|----------------|---------------------------------|
 | GET    | `/hello`                      | No             | Smoke-test endpoint             |
 | GET    | `/actuator/health`            | No             | Overall health — `{"status":"UP"}` with no other detail (issue #44). `/actuator/health/liveness`/`/actuator/health/readiness` sub-groups exist too, for a container orchestrator's separate liveness/readiness probes — see [architecture.md](architecture.md) |
-| POST   | `/api/auth/register`          | No             | Create an account, returns `{ token, refreshToken }` — `400` if the password is under 8 characters or missing a letter/digit. Also emails a verification token (informational only right now — see "Email verification" in [security.md](security.md); nothing currently checks it) |
-| POST   | `/api/auth/login`              | No             | Returns `{ token, refreshToken }` for an existing account — `429` after 5 failed attempts from the same IP within a minute |
+| POST   | `/api/auth/register`          | No             | Create an account, returns `{ token, refreshToken }` immediately — `400` if the password is under 8 characters or missing a letter/digit. Also emails a verification token (still logs the caller in right away either way — see "Email verification" in [security.md](security.md)) |
+| POST   | `/api/auth/login`              | No             | Returns `{ token, refreshToken }` for an existing, verified account — `429` after 5 failed attempts from the same IP within a minute, `403` if the account exists and the password is correct but the email isn't verified yet (issue #120) |
+| POST   | `/api/auth/resend-verification` | No            | Always returns `200` regardless of whether the email is registered or already verified (same enumeration-avoidance as `forgot-password`) — if it's registered and unverified, emails a fresh single-use verification token, replacing any previous one (issue #120) |
 | POST   | `/api/auth/refresh`            | No*            | Exchanges a valid refresh token for a brand new `{ token, refreshToken }` pair — the old refresh token is revoked in the same call (single-use/rotated), so reusing it afterward gets `401`. `400` if no `Bearer` token was sent, `401` if it's missing/expired/revoked/not actually a refresh token. *Same permitAll caveat as logout below |
 | POST   | `/api/auth/logout`             | No*            | Revokes the caller's token immediately — `400` if no `Bearer` token was sent. *Not gated by `SecurityConfig` like other protected routes, but functionally requires a real token to do anything |
 | POST   | `/api/auth/forgot-password`    | No             | Always returns `200` regardless of whether the email is registered (avoids leaking which emails have accounts) — if it is, emails a single-use reset token valid for 1 hour |
@@ -41,8 +42,8 @@ Every error response across the API (issue #47) has the same JSON shape:
 
 `error` is a short, machine-readable code — safe to branch on directly (`body.error === "UNAUTHORIZED"`)
 instead of string-matching a status code or a human-readable message. Codes in use: `BAD_REQUEST`,
-`UNAUTHORIZED`, `CONFLICT`, `TOO_MANY_REQUESTS`, `NOT_FOUND`. `message` is for humans/logging only,
-never for a client to parse.
+`UNAUTHORIZED`, `FORBIDDEN`, `CONFLICT`, `TOO_MANY_REQUESTS`, `NOT_FOUND`. `message` is for
+humans/logging only, never for a client to parse.
 
 ## Pagination (issue #49)
 
