@@ -35,11 +35,13 @@ class BusinessControllerTest {
 
     private final BusinessRepository businessRepository = mock(BusinessRepository.class);
     private final WorkPassRepository workPassRepository = mock(WorkPassRepository.class);
+    private final CustomObligationRepository customObligationRepository = mock(CustomObligationRepository.class);
     private final IdempotencyKeyRepository idempotencyKeyRepository = mock(IdempotencyKeyRepository.class);
     private final DeadlineRecordRepository deadlineRecordRepository = mock(DeadlineRecordRepository.class);
     private final RuleEngine ruleEngine = new RuleEngine();
     private final BusinessController controller = new BusinessController(
-            businessRepository, workPassRepository, idempotencyKeyRepository, deadlineRecordRepository, ruleEngine);
+            businessRepository, workPassRepository, customObligationRepository, idempotencyKeyRepository,
+            deadlineRecordRepository, ruleEngine);
 
     private final User currentUser = new User();
 

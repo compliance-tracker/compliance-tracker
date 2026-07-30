@@ -30,6 +30,16 @@ public class DeadlineRecord {
 
     private boolean reminderSent = false;
 
+    // Both null except for ObligationType.CUSTOM (issue #59) - see rules.Deadline's own comment
+    // for why both are needed. customObligation is LAZY same as business - a plain @ManyToOne
+    // FK, not owned/cascaded from this side (custom_obligation is what cascades onto this table
+    // via the DB's own ON DELETE CASCADE, not the other way around).
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "custom_obligation_id")
+    private CustomObligation customObligation;
+
+    private String customName;
+
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 
@@ -44,4 +54,10 @@ public class DeadlineRecord {
 
     public boolean isReminderSent() { return reminderSent; }
     public void setReminderSent(boolean reminderSent) { this.reminderSent = reminderSent; }
+
+    public CustomObligation getCustomObligation() { return customObligation; }
+    public void setCustomObligation(CustomObligation customObligation) { this.customObligation = customObligation; }
+
+    public String getCustomName() { return customName; }
+    public void setCustomName(String customName) { this.customName = customName; }
 }

@@ -19,16 +19,19 @@ public class DeadlineSyncService {
 
     private final BusinessRepository businessRepository;
     private final WorkPassRepository workPassRepository;
+    private final CustomObligationRepository customObligationRepository;
     private final DeadlineRecordRepository deadlineRecordRepository;
     private final RuleEngine ruleEngine;
 
     @Autowired
     public DeadlineSyncService(BusinessRepository businessRepository,
                                 WorkPassRepository workPassRepository,
+                                CustomObligationRepository customObligationRepository,
                                 DeadlineRecordRepository deadlineRecordRepository,
                                 RuleEngine ruleEngine) {
         this.businessRepository = businessRepository;
         this.workPassRepository = workPassRepository;
+        this.customObligationRepository = customObligationRepository;
         this.deadlineRecordRepository = deadlineRecordRepository;
         this.ruleEngine = ruleEngine;
     }
@@ -60,11 +63,18 @@ public class DeadlineSyncService {
 
         for (Business business : businessRepository.findAll()) {
             List<WorkPass> workPasses = workPassRepository.findByBusinessId(business.getId());
-            List<Deadline> computed = ruleEngine.computeDeadlines(business, workPasses, today);
+            List<CustomObligation> customObligations = customObligationRepository.findByBusinessId(business.getId());
+            List<Deadline> computed = ruleEngine.computeDeadlines(business, workPasses, customObligations, today);
 
             for (Deadline deadline : computed) {
-                boolean alreadyPersisted = deadlineRecordRepository.existsByBusinessIdAndObligationTypeAndDueDate(
-                        business.getId(), deadline.getObligationType(), deadline.getDueDate());
+                // Issue #59: a custom obligation's own id is the real dedupe key - the plain
+                // (business, obligationType, dueDate) key can't tell two different custom
+                // obligations that happen to share a due date apart.
+                boolean alreadyPersisted = deadline.getCustomObligationId() != null
+                        ? deadlineRecordRepository.existsByCustomObligationIdAndDueDate(
+                                deadline.getCustomObligationId(), deadline.getDueDate())
+                        : deadlineRecordRepository.existsByBusinessIdAndObligationTypeAndDueDate(
+                                business.getId(), deadline.getObligationType(), deadline.getDueDate());
 
                 // Skip if it already exists - inserting again would create a duplicate row,
                 // and re-saving a fresh one would wipe out reminderSent=true if a reminder
@@ -74,6 +84,10 @@ public class DeadlineSyncService {
                     record.setBusiness(business);
                     record.setObligationType(deadline.getObligationType());
                     record.setDueDate(deadline.getDueDate());
+                    if (deadline.getCustomObligationId() != null) {
+                        record.setCustomObligation(customObligationRepository.getReferenceById(deadline.getCustomObligationId()));
+                        record.setCustomName(deadline.getCustomName());
+                    }
                     deadlineRecordRepository.save(record);
                 }
             }

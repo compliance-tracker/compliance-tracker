@@ -1,6 +1,7 @@
 package com.chrainx.compliance_tracker.rules;
 
 import com.chrainx.compliance_tracker.business.Business;
+import com.chrainx.compliance_tracker.business.CustomObligation;
 import com.chrainx.compliance_tracker.business.WorkPass;
 import org.junit.jupiter.api.Test;
 
@@ -34,7 +35,7 @@ class RuleEngineTest {
         business.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
         business.setGstRegistered(false);
 
-        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, Collections.emptyList(), LocalDate.of(2026, 1, 1));
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, Collections.emptyList(), Collections.emptyList(), LocalDate.of(2026, 1, 1));
 
         Deadline acra = deadlines.stream()
                 .filter(d -> d.getObligationType() == ObligationType.ACRA_ANNUAL_RETURN)
@@ -53,7 +54,7 @@ class RuleEngineTest {
         business.setFinancialYearEnd(LocalDate.of(2024, 12, 31)); // deadline: 2025-07-31
         business.setGstRegistered(false);
 
-        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, Collections.emptyList(), LocalDate.of(2026, 1, 1));
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, Collections.emptyList(), Collections.emptyList(), LocalDate.of(2026, 1, 1));
 
         Deadline acra = deadlines.stream()
                 .filter(d -> d.getObligationType() == ObligationType.ACRA_ANNUAL_RETURN)
@@ -70,7 +71,7 @@ class RuleEngineTest {
         Business business = new Business();
         business.setFinancialYearEnd(LocalDate.of(2020, 12, 31)); // deadline: 2021-07-31
 
-        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, Collections.emptyList(), LocalDate.of(2026, 1, 1));
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, Collections.emptyList(), Collections.emptyList(), LocalDate.of(2026, 1, 1));
 
         Deadline acra = deadlines.stream()
                 .filter(d -> d.getObligationType() == ObligationType.ACRA_ANNUAL_RETURN)
@@ -85,7 +86,7 @@ class RuleEngineTest {
         Business business = new Business();
         business.setFinancialYearEnd(LocalDate.of(2025, 12, 31)); // deadline: 2026-07-31
 
-        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, Collections.emptyList(), LocalDate.of(2026, 7, 31));
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, Collections.emptyList(), Collections.emptyList(), LocalDate.of(2026, 7, 31));
 
         Deadline acra = deadlines.stream()
                 .filter(d -> d.getObligationType() == ObligationType.ACRA_ANNUAL_RETURN)
@@ -102,7 +103,7 @@ class RuleEngineTest {
         business.setGstRegistered(true);
 
         // Reference date falls in Q1 (Jan-Mar) -> quarter end 2026-03-31 -> deadline 2026-04-30
-        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, Collections.emptyList(), LocalDate.of(2026, 2, 15));
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, Collections.emptyList(), Collections.emptyList(), LocalDate.of(2026, 2, 15));
 
         Deadline gst = deadlines.stream()
                 .filter(d -> d.getObligationType() == ObligationType.GST_F5)
@@ -118,7 +119,7 @@ class RuleEngineTest {
         business.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
         business.setGstRegistered(false);
 
-        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, Collections.emptyList(), LocalDate.of(2026, 2, 15));
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, Collections.emptyList(), Collections.emptyList(), LocalDate.of(2026, 2, 15));
 
         assertFalse(deadlines.stream().anyMatch(d -> d.getObligationType() == ObligationType.GST_F5));
         assertTrue(deadlines.stream().anyMatch(d -> d.getObligationType() == ObligationType.ACRA_ANNUAL_RETURN));
@@ -136,8 +137,7 @@ class RuleEngineTest {
         WorkPass pass2 = new WorkPass();
         pass2.setExpiryDate(LocalDate.of(2027, 3, 15));
 
-        List<Deadline> deadlines = ruleEngine.computeDeadlines(
-                business, List.of(pass1, pass2), LocalDate.of(2026, 2, 15));
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, List.of(pass1, pass2), Collections.emptyList(), LocalDate.of(2026, 2, 15));
 
         List<LocalDate> workPassDueDates = deadlines.stream()
                 .filter(d -> d.getObligationType() == ObligationType.WORK_PASS_RENEWAL)
@@ -199,5 +199,91 @@ class RuleEngineTest {
     void financialYearEndFarInTheFuture_correctlyExceedsTheLimit() {
         assertTrue(ruleEngine.firstFinancialYearExceedsAcraLimit(
                 LocalDate.of(2021, 1, 1), LocalDate.of(2029, 12, 31)));
+    }
+
+    // Custom obligations (issue #59).
+
+    private CustomObligation customObligation(Long id, String name, LocalDate dueDate, Integer recurrenceMonths) {
+        CustomObligation obligation = new CustomObligation();
+        obligation.setId(id);
+        obligation.setName(name);
+        obligation.setDueDate(dueDate);
+        obligation.setRecurrenceMonths(recurrenceMonths);
+        return obligation;
+    }
+
+    @Test
+    void oneOffCustomObligation_usesItsOwnDueDate_unchanged() {
+        Business business = new Business();
+        business.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
+        CustomObligation obligation = customObligation(1L, "Renew business insurance", LocalDate.of(2026, 9, 1), null);
+
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(
+                business, Collections.emptyList(), List.of(obligation), LocalDate.of(2026, 2, 15));
+
+        Deadline custom = deadlines.stream().filter(d -> d.getObligationType() == ObligationType.CUSTOM).findFirst().orElseThrow();
+        assertEquals(LocalDate.of(2026, 9, 1), custom.getDueDate());
+        assertEquals("Renew business insurance", custom.getCustomName());
+        assertEquals(1L, custom.getCustomObligationId());
+    }
+
+    @Test
+    void oneOffCustomObligation_thatHasAlreadyPassed_keepsShowingItsOriginalDueDate() {
+        // Same "an overdue deadline stays visible, not silently hidden" behavior as
+        // WORK_PASS_RENEWAL already has - a one-off custom obligation has no recurrence to roll
+        // forward to, so unlike ACRA it must NOT advance to some other date.
+        Business business = new Business();
+        business.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
+        CustomObligation obligation = customObligation(1L, "Submit annual license renewal", LocalDate.of(2026, 1, 1), null);
+
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(
+                business, Collections.emptyList(), List.of(obligation), LocalDate.of(2026, 6, 1));
+
+        Deadline custom = deadlines.stream().filter(d -> d.getObligationType() == ObligationType.CUSTOM).findFirst().orElseThrow();
+        assertEquals(LocalDate.of(2026, 1, 1), custom.getDueDate());
+    }
+
+    @Test
+    void recurringCustomObligation_rollsForwardByItsOwnIntervalInMonths_notYears() {
+        // Anchor 2025-01-15, every 3 months - by 2026-02-01, the next unpassed occurrence is
+        // 2026-04-15 (2025-01-15 -> 04-15 -> 07-15 -> 10-15 -> 2026-01-15 -> 2026-04-15).
+        Business business = new Business();
+        business.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
+        CustomObligation obligation = customObligation(1L, "Quarterly safety inspection", LocalDate.of(2025, 1, 15), 3);
+
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(
+                business, Collections.emptyList(), List.of(obligation), LocalDate.of(2026, 2, 1));
+
+        Deadline custom = deadlines.stream().filter(d -> d.getObligationType() == ObligationType.CUSTOM).findFirst().orElseThrow();
+        assertEquals(LocalDate.of(2026, 4, 15), custom.getDueDate());
+    }
+
+    @Test
+    void recurringCustomObligation_dueInTheFuture_isNotRolledForward() {
+        Business business = new Business();
+        business.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
+        CustomObligation obligation = customObligation(1L, "Annual policy review", LocalDate.of(2026, 11, 1), 12);
+
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(
+                business, Collections.emptyList(), List.of(obligation), LocalDate.of(2026, 2, 15));
+
+        Deadline custom = deadlines.stream().filter(d -> d.getObligationType() == ObligationType.CUSTOM).findFirst().orElseThrow();
+        assertEquals(LocalDate.of(2026, 11, 1), custom.getDueDate());
+    }
+
+    @Test
+    void multipleCustomObligations_eachProduceTheirOwnDeadline() {
+        Business business = new Business();
+        business.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
+        CustomObligation insurance = customObligation(1L, "Renew business insurance", LocalDate.of(2026, 9, 1), null);
+        CustomObligation license = customObligation(2L, "Submit annual license renewal", LocalDate.of(2026, 10, 1), null);
+
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(
+                business, Collections.emptyList(), List.of(insurance, license), LocalDate.of(2026, 2, 15));
+
+        List<Deadline> customDeadlines = deadlines.stream().filter(d -> d.getObligationType() == ObligationType.CUSTOM).toList();
+        assertEquals(2, customDeadlines.size());
+        assertTrue(customDeadlines.stream().anyMatch(d -> d.getCustomObligationId().equals(1L) && d.getCustomName().equals("Renew business insurance")));
+        assertTrue(customDeadlines.stream().anyMatch(d -> d.getCustomObligationId().equals(2L) && d.getCustomName().equals("Submit annual license renewal")));
     }
 }

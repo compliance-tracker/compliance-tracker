@@ -40,8 +40,11 @@ public class EmailNotificationSender implements NotificationSender {
 
     @Override
     public void send(Business business, DeadlineRecord deadlineRecord) {
-        String obligationLabel = OBLIGATION_LABELS.getOrDefault(
-                deadlineRecord.getObligationType(), deadlineRecord.getObligationType().toString());
+        // Issue #59: a CUSTOM obligation has no fixed label to look up - its own customName is
+        // the real display text, set on the record at sync time from the obligation's own name.
+        String obligationLabel = deadlineRecord.getObligationType() == ObligationType.CUSTOM
+                ? deadlineRecord.getCustomName()
+                : OBLIGATION_LABELS.getOrDefault(deadlineRecord.getObligationType(), deadlineRecord.getObligationType().toString());
 
         MimeMessage message = mailSender.createMimeMessage();
         try {

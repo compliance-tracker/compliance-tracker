@@ -21,11 +21,12 @@ class DeadlineSyncServiceTest {
 
     private final BusinessRepository businessRepository = mock(BusinessRepository.class);
     private final WorkPassRepository workPassRepository = mock(WorkPassRepository.class);
+    private final CustomObligationRepository customObligationRepository = mock(CustomObligationRepository.class);
     private final DeadlineRecordRepository deadlineRecordRepository = mock(DeadlineRecordRepository.class);
     private final RuleEngine ruleEngine = new RuleEngine();
 
-    private final DeadlineSyncService service =
-            new DeadlineSyncService(businessRepository, workPassRepository, deadlineRecordRepository, ruleEngine);
+    private final DeadlineSyncService service = new DeadlineSyncService(
+            businessRepository, workPassRepository, customObligationRepository, deadlineRecordRepository, ruleEngine);
 
     @Test
     void syncDeadlines_insertsNewRecord_whenNotAlreadyPersisted() {

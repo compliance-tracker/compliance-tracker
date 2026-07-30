@@ -15,6 +15,11 @@ public interface DeadlineRecordRepository extends JpaRepository<DeadlineRecord, 
     // this project (see README known limitations).
     boolean existsByBusinessIdAndObligationTypeAndDueDate(Long businessId, ObligationType obligationType, LocalDate dueDate);
 
+    // Issue #59: the dedupe key above can't distinguish two different custom obligations that
+    // happen to share the same business and due date - customObligationId is the real
+    // disambiguator for ObligationType.CUSTOM records specifically.
+    boolean existsByCustomObligationIdAndDueDate(Long customObligationId, LocalDate dueDate);
+
     // The starting point for the scheduler/dispatcher's "what needs a reminder right now" query.
     // Deliberately not filtered by due date here (issue #53) - since each business now has its
     // own leadTimeDays, there's no single cutoff this query could apply; DeadlineSyncService
@@ -30,4 +35,11 @@ public interface DeadlineRecordRepository extends JpaRepository<DeadlineRecord, 
     // get reminded off the wrong due date. Scoped to reminderSentFalse only - an already-sent
     // reminder is historical record of something that genuinely happened and is left alone.
     void deleteByBusinessIdAndObligationTypeAndReminderSentFalse(Long businessId, ObligationType obligationType);
+
+    // Same reasoning as the method above, for a custom obligation's own dueDate/recurrenceMonths
+    // changing via CustomObligationController.updateCustomObligation (issue #59) - without this,
+    // an edited obligation would keep its old, now-stale unreminded DeadlineRecord sitting
+    // around, and the next sync's dedupe check (existsByCustomObligationIdAndDueDate) would
+    // insert the new one alongside it rather than replacing it.
+    void deleteByCustomObligationIdAndReminderSentFalse(Long customObligationId);
 }
