@@ -1,5 +1,6 @@
 package com.chrainx.compliance_tracker.auth;
 import com.chrainx.compliance_tracker.error.ApiError;
+import com.chrainx.compliance_tracker.security.EmailHasher;
 
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
@@ -61,12 +62,17 @@ class AuthIntegrationTest {
     @Autowired
     private UserRepository userRepository;
 
+    // Issue #63: email is looked up by its deterministic hash now, not the (encrypted,
+    // non-deterministic) email column itself - see EmailHasher's own comment.
+    @Autowired
+    private EmailHasher emailHasher;
+
     // Issue #120: login now requires a verified email, so any test that registers and then
     // exercises the real /api/auth/login endpoint (not just uses register's own returned tokens)
     // needs to actually verify first - same real-token-out-of-the-DB, real-endpoint technique
     // already used throughout this file, not a shortcut around the feature being tested.
     private void verifyEmail(String email) {
-        Long userId = userRepository.findByEmail(email).orElseThrow().getId();
+        Long userId = userRepository.findByEmailHash(emailHasher.hash(email)).orElseThrow().getId();
         String realToken = emailVerificationTokenRepository.findAll().stream()
                 .filter(t -> t.getUserId().equals(userId))
                 .reduce((first, second) -> second)
@@ -435,7 +441,7 @@ class AuthIntegrationTest {
         // accumulates rows across many test runs over a long-lived session, so an unfiltered
         // "grab the last one" can pick up a completely different test's token. Found live: this
         // exact test started genuinely failing once enough unrelated rows had piled up.
-        Long userId = userRepository.findByEmail(email).orElseThrow().getId();
+        Long userId = userRepository.findByEmailHash(emailHasher.hash(email)).orElseThrow().getId();
         String realToken = passwordResetTokenRepository.findAll().stream()
                 .filter(t -> t.getUserId().equals(userId))
                 .reduce((first, second) -> second) // most recently inserted, for this user
@@ -474,7 +480,7 @@ class AuthIntegrationTest {
         Thread.sleep(1100);
 
         restTemplate.postForEntity("/api/auth/forgot-password", new ForgotPasswordRequest(email), Void.class);
-        Long resetUserId = userRepository.findByEmail(email).orElseThrow().getId();
+        Long resetUserId = userRepository.findByEmailHash(emailHasher.hash(email)).orElseThrow().getId();
         String realToken = passwordResetTokenRepository.findAll().stream()
                 .filter(t -> t.getUserId().equals(resetUserId))
                 .reduce((first, second) -> second)
@@ -521,7 +527,7 @@ class AuthIntegrationTest {
         restTemplate.postForEntity(
                 "/api/auth/forgot-password", new ForgotPasswordRequest(email), Void.class);
 
-        Long reuseUserId = userRepository.findByEmail(email).orElseThrow().getId();
+        Long reuseUserId = userRepository.findByEmailHash(emailHasher.hash(email)).orElseThrow().getId();
         String realToken = passwordResetTokenRepository.findAll().stream()
                 .filter(t -> t.getUserId().equals(reuseUserId))
                 .reduce((first, second) -> second)
@@ -557,7 +563,7 @@ class AuthIntegrationTest {
         String email = "auth-e2e-verify-" + System.nanoTime() + "@example.com";
         restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), RegistrationResponse.class);
 
-        User freshlyRegistered = userRepository.findByEmail(email).orElseThrow();
+        User freshlyRegistered = userRepository.findByEmailHash(emailHasher.hash(email)).orElseThrow();
         assertFalse(freshlyRegistered.isEmailVerified());
 
         String realToken = emailVerificationTokenRepository.findAll().stream()
@@ -570,7 +576,7 @@ class AuthIntegrationTest {
                 "/api/auth/verify-email", new VerifyEmailRequest(realToken), Void.class);
         assertEquals(HttpStatus.OK, verifyResponse.getStatusCode());
 
-        User verified = userRepository.findByEmail(email).orElseThrow();
+        User verified = userRepository.findByEmailHash(emailHasher.hash(email)).orElseThrow();
         assertTrue(verified.isEmailVerified());
         assertTrue(emailVerificationTokenRepository.findByToken(realToken).isEmpty());
     }
@@ -580,7 +586,7 @@ class AuthIntegrationTest {
         String email = "auth-e2e-verify-reuse-" + System.nanoTime() + "@example.com";
         restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), RegistrationResponse.class);
 
-        Long userId = userRepository.findByEmail(email).orElseThrow().getId();
+        Long userId = userRepository.findByEmailHash(emailHasher.hash(email)).orElseThrow().getId();
         String realToken = emailVerificationTokenRepository.findAll().stream()
                 .filter(t -> t.getUserId().equals(userId))
                 .reduce((first, second) -> second)
@@ -614,7 +620,7 @@ class AuthIntegrationTest {
         String email = "auth-e2e-verify-race-" + System.nanoTime() + "@example.com";
         restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), RegistrationResponse.class);
 
-        Long userId = userRepository.findByEmail(email).orElseThrow().getId();
+        Long userId = userRepository.findByEmailHash(emailHasher.hash(email)).orElseThrow().getId();
         String realToken = emailVerificationTokenRepository.findAll().stream()
                 .filter(t -> t.getUserId().equals(userId))
                 .reduce((first, second) -> second)
@@ -662,7 +668,7 @@ class AuthIntegrationTest {
         restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), RegistrationResponse.class);
         restTemplate.postForEntity("/api/auth/forgot-password", new ForgotPasswordRequest(email), Void.class);
 
-        Long userId = userRepository.findByEmail(email).orElseThrow().getId();
+        Long userId = userRepository.findByEmailHash(emailHasher.hash(email)).orElseThrow().getId();
         String realToken = passwordResetTokenRepository.findAll().stream()
                 .filter(t -> t.getUserId().equals(userId))
                 .reduce((first, second) -> second)
@@ -768,7 +774,7 @@ class AuthIntegrationTest {
         // fresh, different token arrives -> that one actually works.
         String email = "auth-e2e-resend-" + System.nanoTime() + "@example.com";
         restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, "a-real-password1"), RegistrationResponse.class);
-        Long userId = userRepository.findByEmail(email).orElseThrow().getId();
+        Long userId = userRepository.findByEmailHash(emailHasher.hash(email)).orElseThrow().getId();
         String originalToken = emailVerificationTokenRepository.findAll().stream()
                 .filter(t -> t.getUserId().equals(userId))
                 .reduce((first, second) -> second)

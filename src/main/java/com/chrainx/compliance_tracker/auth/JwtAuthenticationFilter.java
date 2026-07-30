@@ -1,5 +1,6 @@
 package com.chrainx.compliance_tracker.auth;
 
+import com.chrainx.compliance_tracker.security.EmailHasher;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -31,11 +32,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtService jwtService;
     private final UserRepository userRepository;
     private final TokenBlocklist tokenBlocklist;
+    private final EmailHasher emailHasher;
 
-    public JwtAuthenticationFilter(JwtService jwtService, UserRepository userRepository, TokenBlocklist tokenBlocklist) {
+    public JwtAuthenticationFilter(JwtService jwtService, UserRepository userRepository, TokenBlocklist tokenBlocklist,
+                                    EmailHasher emailHasher) {
         this.jwtService = jwtService;
         this.userRepository = userRepository;
         this.tokenBlocklist = tokenBlocklist;
+        this.emailHasher = emailHasher;
     }
 
     @Override
@@ -51,7 +55,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 String email = jwtService.extractEmail(token);
 
                 if (email != null) {
-                    userRepository.findByEmail(email).ifPresent(user -> {
+                    userRepository.findByEmailHash(emailHasher.hash(email)).ifPresent(user -> {
                         // A password reset (issue #96) sets tokenValidAfter to the moment of
                         // reset - a token minted before that is rejected here even though its
                         // own signature/expiry still check out, since TokenBlocklist alone can't

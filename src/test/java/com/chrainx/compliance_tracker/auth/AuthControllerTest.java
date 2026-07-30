@@ -2,6 +2,7 @@ package com.chrainx.compliance_tracker.auth;
 
 import com.chrainx.compliance_tracker.error.ApiError;
 import com.chrainx.compliance_tracker.notifications.AuthEmailSender;
+import com.chrainx.compliance_tracker.security.EmailHasher;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
@@ -41,10 +42,13 @@ class AuthControllerTest {
     private final PasswordResetTokenRepository passwordResetTokenRepository = mock(PasswordResetTokenRepository.class);
     private final EmailVerificationTokenRepository emailVerificationTokenRepository = mock(EmailVerificationTokenRepository.class);
     private final AuthEmailSender authEmailSender = mock(AuthEmailSender.class);
+    // Real instance, not mocked - EmailHasher is pure logic (issue #63), same reasoning as
+    // JwtService/LoginRateLimiter/TokenBlocklist above.
+    private final EmailHasher emailHasher = new EmailHasher("I9FNAHshRkw+oPgsfjRlvm+F3SNRE30qlcWwcY5Tn7A=");
 
     private final AuthController controller = new AuthController(userRepository, passwordEncoder, jwtService,
             loginRateLimiter, tokenBlocklist, passwordResetTokenRepository, emailVerificationTokenRepository,
-            authEmailSender, 3_600_000L, 604_800_000L);
+            authEmailSender, emailHasher, 3_600_000L, 604_800_000L);
 
     private MockHttpServletRequest requestFrom(String ip) {
         MockHttpServletRequest request = new MockHttpServletRequest();
@@ -68,7 +72,7 @@ class AuthControllerTest {
         // Issue #120 (expanded scope): register used to return real, immediately usable tokens -
         // it no longer does, since an unverified account can't log in anyway now (login itself
         // enforces verification, see the login_* tests below). Just a confirmation message.
-        when(userRepository.findByEmail("new@example.com")).thenReturn(Optional.empty());
+        when(userRepository.findByEmailHash(emailHasher.hash("new@example.com"))).thenReturn(Optional.empty());
 
         ResponseEntity<?> response = controller.register(new AuthRequest("new@example.com", "password123"));
 
@@ -79,7 +83,7 @@ class AuthControllerTest {
 
     @Test
     void register_returns409_whenEmailAlreadyTaken() {
-        when(userRepository.findByEmail("taken@example.com")).thenReturn(Optional.of(new User()));
+        when(userRepository.findByEmailHash(emailHasher.hash("taken@example.com"))).thenReturn(Optional.of(new User()));
 
         ResponseEntity<?> response = controller.register(new AuthRequest("taken@example.com", "password123"));
 
@@ -94,7 +98,7 @@ class AuthControllerTest {
         // another request for the same email won the race and committed first. Without
         // catching this, it would surface as an unhandled 500, not the same clean 409 the
         // sequential-request case above returns.
-        when(userRepository.findByEmail("racing@example.com")).thenReturn(Optional.empty());
+        when(userRepository.findByEmailHash(emailHasher.hash("racing@example.com"))).thenReturn(Optional.empty());
         doThrow(new DataIntegrityViolationException("duplicate key value violates unique constraint"))
                 .when(userRepository).save(any());
 
@@ -142,7 +146,7 @@ class AuthControllerTest {
         user.setEmail("owner@example.com");
         user.setPasswordHash(passwordEncoder.encode("correct-password"));
         user.setEmailVerified(true);
-        when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findByEmailHash(emailHasher.hash("owner@example.com"))).thenReturn(Optional.of(user));
 
         ResponseEntity<?> response = controller.login(
                 new AuthRequest("owner@example.com", "correct-password"), requestFrom("10.0.0.1"));
@@ -157,7 +161,7 @@ class AuthControllerTest {
         User user = new User();
         user.setEmail("owner@example.com");
         user.setPasswordHash(passwordEncoder.encode("correct-password"));
-        when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findByEmailHash(emailHasher.hash("owner@example.com"))).thenReturn(Optional.of(user));
 
         ResponseEntity<?> response = controller.login(
                 new AuthRequest("owner@example.com", "wrong-password"), requestFrom("10.0.0.2"));
@@ -168,7 +172,7 @@ class AuthControllerTest {
 
     @Test
     void login_returns401_whenEmailDoesNotExist() {
-        when(userRepository.findByEmail(any())).thenReturn(Optional.empty());
+        when(userRepository.findByEmailHash(any())).thenReturn(Optional.empty());
 
         ResponseEntity<?> response = controller.login(
                 new AuthRequest("nobody@example.com", "anything"), requestFrom("10.0.0.3"));
@@ -181,7 +185,7 @@ class AuthControllerTest {
         // Regression test for issue #35: repeated password-guessing against a known email had
         // nothing stopping it. The 6th attempt from the same IP within the window should be
         // rejected before even checking credentials.
-        when(userRepository.findByEmail(any())).thenReturn(Optional.empty());
+        when(userRepository.findByEmailHash(any())).thenReturn(Optional.empty());
         MockHttpServletRequest request = requestFrom("10.0.0.4");
 
         for (int i = 0; i < 5; i++) {
@@ -199,7 +203,7 @@ class AuthControllerTest {
     void login_isNotRateLimited_forADifferentIp() {
         // A different attacker IP (or a different legitimate user entirely) must not be
         // affected by another IP's failed attempts - rate limiting is per-IP, not global.
-        when(userRepository.findByEmail(any())).thenReturn(Optional.empty());
+        when(userRepository.findByEmailHash(any())).thenReturn(Optional.empty());
 
         for (int i = 0; i < 5; i++) {
             controller.login(new AuthRequest("victim@example.com", "guess" + i), requestFrom("10.0.0.5"));
@@ -217,7 +221,7 @@ class AuthControllerTest {
         user.setEmail("owner@example.com");
         user.setPasswordHash(passwordEncoder.encode("correct-password"));
         user.setEmailVerified(true);
-        when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findByEmailHash(emailHasher.hash("owner@example.com"))).thenReturn(Optional.of(user));
         MockHttpServletRequest request = requestFrom("10.0.0.7");
 
         controller.login(new AuthRequest("owner@example.com", "wrong-password"), request);
@@ -242,7 +246,7 @@ class AuthControllerTest {
         user.setEmail("owner@example.com");
         user.setPasswordHash(passwordEncoder.encode("correct-password"));
         // emailVerified defaults to false - not set here on purpose.
-        when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findByEmailHash(emailHasher.hash("owner@example.com"))).thenReturn(Optional.of(user));
 
         ResponseEntity<?> response = controller.login(
                 new AuthRequest("owner@example.com", "correct-password"), requestFrom("10.0.0.8"));
@@ -258,7 +262,7 @@ class AuthControllerTest {
         User user = new User();
         user.setEmail("owner@example.com");
         user.setPasswordHash(passwordEncoder.encode("correct-password"));
-        when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findByEmailHash(emailHasher.hash("owner@example.com"))).thenReturn(Optional.of(user));
         MockHttpServletRequest request = requestFrom("10.0.0.9");
 
         for (int i = 0; i < 5; i++) {
@@ -275,7 +279,7 @@ class AuthControllerTest {
         User user = new User();
         user.setId(1L);
         user.setEmail("owner@example.com");
-        when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findByEmailHash(emailHasher.hash("owner@example.com"))).thenReturn(Optional.of(user));
 
         ResponseEntity<Void> response = controller.resendVerification(new ResendVerificationRequest("owner@example.com"));
 
@@ -293,7 +297,7 @@ class AuthControllerTest {
         user.setId(1L);
         user.setEmail("owner@example.com");
         user.setEmailVerified(true);
-        when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findByEmailHash(emailHasher.hash("owner@example.com"))).thenReturn(Optional.of(user));
 
         ResponseEntity<Void> response = controller.resendVerification(new ResendVerificationRequest("owner@example.com"));
 
@@ -304,7 +308,7 @@ class AuthControllerTest {
 
     @Test
     void resendVerification_forANonExistentEmail_stillReturns200_withoutEmailingAnything() {
-        when(userRepository.findByEmail("nobody@example.com")).thenReturn(Optional.empty());
+        when(userRepository.findByEmailHash(emailHasher.hash("nobody@example.com"))).thenReturn(Optional.empty());
 
         ResponseEntity<Void> response = controller.resendVerification(new ResendVerificationRequest("nobody@example.com"));
 
@@ -349,7 +353,7 @@ class AuthControllerTest {
     void refresh_issuesANewAccessAndRefreshToken_forAValidRefreshToken() {
         User user = new User();
         user.setEmail("owner@example.com");
-        when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findByEmailHash(emailHasher.hash("owner@example.com"))).thenReturn(Optional.of(user));
         String refreshToken = jwtService.generateRefreshToken("owner@example.com");
 
         ResponseEntity<?> response = controller.refresh(requestWithAuthHeader("Bearer " + refreshToken));
@@ -367,7 +371,7 @@ class AuthControllerTest {
         // would for an attacker who got there second.
         User user = new User();
         user.setEmail("owner@example.com");
-        when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findByEmailHash(emailHasher.hash("owner@example.com"))).thenReturn(Optional.of(user));
         String refreshToken = jwtService.generateRefreshToken("owner@example.com");
 
         controller.refresh(requestWithAuthHeader("Bearer " + refreshToken));
@@ -383,7 +387,7 @@ class AuthControllerTest {
         // refresh token either, or the distinction between the two is meaningless.
         User user = new User();
         user.setEmail("owner@example.com");
-        when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findByEmailHash(emailHasher.hash("owner@example.com"))).thenReturn(Optional.of(user));
         String accessToken = jwtService.generateAccessToken("owner@example.com");
 
         ResponseEntity<?> response = controller.refresh(requestWithAuthHeader("Bearer " + accessToken));
@@ -393,7 +397,7 @@ class AuthControllerTest {
 
     @Test
     void refresh_returns401_whenTheAccountNoLongerExists() {
-        when(userRepository.findByEmail("deleted@example.com")).thenReturn(Optional.empty());
+        when(userRepository.findByEmailHash(emailHasher.hash("deleted@example.com"))).thenReturn(Optional.empty());
         String refreshToken = jwtService.generateRefreshToken("deleted@example.com");
 
         ResponseEntity<?> response = controller.refresh(requestWithAuthHeader("Bearer " + refreshToken));
@@ -413,7 +417,7 @@ class AuthControllerTest {
         User user = new User();
         user.setId(1L);
         user.setEmail("owner@example.com");
-        when(userRepository.findByEmail("owner@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findByEmailHash(emailHasher.hash("owner@example.com"))).thenReturn(Optional.of(user));
 
         ResponseEntity<Void> response = controller.forgotPassword(new ForgotPasswordRequest("owner@example.com"));
 
@@ -427,7 +431,7 @@ class AuthControllerTest {
     void forgotPassword_forANonExistentEmail_stillReturns200_withoutEmailingAnything() {
         // Enumeration-avoidance (issue #37, same reasoning as login's identical 401) - the
         // response must not reveal whether the email is actually registered.
-        when(userRepository.findByEmail("nobody@example.com")).thenReturn(Optional.empty());
+        when(userRepository.findByEmailHash(emailHasher.hash("nobody@example.com"))).thenReturn(Optional.empty());
 
         ResponseEntity<Void> response = controller.forgotPassword(new ForgotPasswordRequest("nobody@example.com"));
 
@@ -527,7 +531,7 @@ class AuthControllerTest {
 
     @Test
     void register_alsoGeneratesAndEmailsAVerificationToken() {
-        when(userRepository.findByEmail("new@example.com")).thenReturn(Optional.empty());
+        when(userRepository.findByEmailHash(emailHasher.hash("new@example.com"))).thenReturn(Optional.empty());
 
         controller.register(new AuthRequest("new@example.com", "password123"));
 

@@ -2,6 +2,7 @@ package com.chrainx.compliance_tracker.auth;
 
 import com.chrainx.compliance_tracker.error.ApiError;
 import com.chrainx.compliance_tracker.notifications.AuthEmailSender;
+import com.chrainx.compliance_tracker.security.EmailHasher;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -29,6 +30,7 @@ public class AuthController {
     private final PasswordResetTokenRepository passwordResetTokenRepository;
     private final EmailVerificationTokenRepository emailVerificationTokenRepository;
     private final AuthEmailSender authEmailSender;
+    private final EmailHasher emailHasher;
     private final long passwordResetExpirationMs;
     private final long emailVerificationExpirationMs;
 
@@ -37,7 +39,7 @@ public class AuthController {
                            LoginRateLimiter loginRateLimiter, TokenBlocklist tokenBlocklist,
                            PasswordResetTokenRepository passwordResetTokenRepository,
                            EmailVerificationTokenRepository emailVerificationTokenRepository,
-                           AuthEmailSender authEmailSender,
+                           AuthEmailSender authEmailSender, EmailHasher emailHasher,
                            @Value("${auth.password-reset-expiration-ms}") long passwordResetExpirationMs,
                            @Value("${auth.email-verification-expiration-ms}") long emailVerificationExpirationMs) {
         this.userRepository = userRepository;
@@ -48,6 +50,7 @@ public class AuthController {
         this.passwordResetTokenRepository = passwordResetTokenRepository;
         this.emailVerificationTokenRepository = emailVerificationTokenRepository;
         this.authEmailSender = authEmailSender;
+        this.emailHasher = emailHasher;
         this.passwordResetExpirationMs = passwordResetExpirationMs;
         this.emailVerificationExpirationMs = emailVerificationExpirationMs;
     }
@@ -70,12 +73,16 @@ public class AuthController {
                     "Password must be at least 8 characters and include a letter and a digit."));
         }
 
-        if (userRepository.findByEmail(request.email()).isPresent()) {
+        if (userRepository.findByEmailHash(emailHasher.hash(request.email())).isPresent()) {
             return ResponseEntity.status(409).body(new ApiError("CONFLICT", "An account with this email already exists."));
         }
 
         User user = new User();
         user.setEmail(request.email());
+        // Issue #63: emailHash carries the real uniqueness/lookup guarantee now that email
+        // itself is encrypted (non-deterministically) and can no longer support either - this is
+        // the only place it's ever computed, since there's no "change my email" feature yet.
+        user.setEmailHash(emailHasher.hash(request.email()));
         // Only the hash is ever stored - passwordEncoder.matches() at login time compares a
         // freshly-hashed attempt against this, the raw password itself is never persisted.
         user.setPasswordHash(passwordEncoder.encode(request.password()));
@@ -83,12 +90,13 @@ public class AuthController {
         try {
             userRepository.save(user);
         } catch (DataIntegrityViolationException e) {
-            // The findByEmail check above isn't atomic with this save - two concurrent
+            // The findByEmailHash check above isn't atomic with this save - two concurrent
             // registration requests for the same email can both pass that check before either
-            // commits, and the DB's unique constraint on email (the actual enforcement point)
-            // rejects the second insert. Without this catch, that surfaces as an unhandled
-            // exception (a 500) instead of the same clean 409 the sequential-request case
-            // already returns above.
+            // commits, and the DB's unique constraint on emailHash (the actual enforcement
+            // point - issue #63 moved it off email itself once email became encrypted and
+            // non-deterministic) rejects the second insert. Without this catch, that surfaces
+            // as an unhandled exception (a 500) instead of the same clean 409 the
+            // sequential-request case already returns above.
             return ResponseEntity.status(409).body(new ApiError("CONFLICT", "An account with this email already exists."));
         }
 
@@ -121,7 +129,7 @@ public class AuthController {
                     "Too many failed login attempts. Try again in a minute."));
         }
 
-        var user = userRepository.findByEmail(request.email()).orElse(null);
+        var user = userRepository.findByEmailHash(emailHasher.hash(request.email())).orElse(null);
 
         if (user == null || !passwordEncoder.matches(request.password(), user.getPasswordHash())) {
             // Deliberately the same error for "no such user" and "wrong password" - revealing
@@ -167,7 +175,7 @@ public class AuthController {
             return ResponseEntity.status(401).body(new ApiError("UNAUTHORIZED", "Invalid or expired refresh token."));
         }
 
-        var user = userRepository.findByEmail(email).orElse(null);
+        var user = userRepository.findByEmailHash(emailHasher.hash(email)).orElse(null);
         if (user == null) {
             // The account this refresh token was issued for no longer exists - nothing to
             // refresh into.
@@ -224,7 +232,7 @@ public class AuthController {
     @Transactional
     @PostMapping("/forgot-password")
     public ResponseEntity<Void> forgotPassword(@RequestBody ForgotPasswordRequest request) {
-        userRepository.findByEmail(request.email()).ifPresent(user -> {
+        userRepository.findByEmailHash(emailHasher.hash(request.email())).ifPresent(user -> {
             // deleteByUserId (issue #115) is a bulk delete - see its own Javadoc for why - so a
             // near-simultaneous duplicate forgot-password request racing this same cleanup just
             // silently deletes 0 rows instead of throwing; nothing to check for here, unlike
@@ -330,7 +338,7 @@ public class AuthController {
     @Transactional
     @PostMapping("/resend-verification")
     public ResponseEntity<Void> resendVerification(@RequestBody ResendVerificationRequest request) {
-        userRepository.findByEmail(request.email())
+        userRepository.findByEmailHash(emailHasher.hash(request.email()))
                 .filter(user -> !user.isEmailVerified())
                 .ifPresent(user -> {
                     // Bulk delete (issue #115) - see EmailVerificationTokenRepository's Javadoc.

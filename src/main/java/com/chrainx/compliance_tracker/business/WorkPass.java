@@ -1,5 +1,6 @@
 package com.chrainx.compliance_tracker.business;
 
+import com.chrainx.compliance_tracker.security.EncryptedStringConverter;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import java.time.LocalDate;
@@ -17,6 +18,9 @@ public class WorkPass {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    // Issue #63: encrypted at rest, same reasoning/mechanism as Business.name - a real
+    // individual's name, and never looked up by exact match anywhere in this app.
+    @Convert(converter = EncryptedStringConverter.class)
     private String employeeName;
 
     private LocalDate expiryDate;

@@ -1,5 +1,6 @@
 package com.chrainx.compliance_tracker.business;
 import com.chrainx.compliance_tracker.auth.User;
+import com.chrainx.compliance_tracker.security.EncryptedStringConverter;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
@@ -16,6 +17,10 @@ public class Business {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    // Issue #63: encrypted at rest (AES-256-GCM, see EncryptedStringConverter). Never looked up
+    // by exact match anywhere in this app (only ever fetched by id/ownerId), so unlike
+    // User.email there's no need for a separate deterministic lookup hash here.
+    @Convert(converter = EncryptedStringConverter.class)
     private String name;
 
     private LocalDate financialYearEnd;

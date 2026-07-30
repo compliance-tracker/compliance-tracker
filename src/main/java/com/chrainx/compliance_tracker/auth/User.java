@@ -1,5 +1,6 @@
 package com.chrainx.compliance_tracker.auth;
 
+import com.chrainx.compliance_tracker.security.EncryptedStringConverter;
 import jakarta.persistence.*;
 
 import java.time.Instant;
@@ -14,8 +15,22 @@ public class User {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(unique = true, nullable = false)
+    // Issue #63: encrypted at rest (AES-256-GCM, see EncryptedStringConverter) - no longer
+    // unique at the DB level itself (encryption is deliberately non-deterministic, so the same
+    // email produces different ciphertext every save; a UNIQUE constraint on this column would
+    // be silently meaningless). emailHash below carries the real uniqueness guarantee and is
+    // what every lookup actually queries against instead.
+    @Convert(converter = EncryptedStringConverter.class)
+    @Column(nullable = false)
     private String email;
+
+    // Deterministic HMAC-SHA256 of email (see EmailHasher) - exists purely so email can still be
+    // looked up by exact match and enforced unique, despite the encrypted column itself no
+    // longer supporting either. Computed by the caller (AuthController) whenever email is set,
+    // not automatically kept in sync by this entity - there is currently no "change my email"
+    // feature, so the only place this is ever computed is at registration.
+    @Column(nullable = false, unique = true)
+    private String emailHash;
 
     // Never the plain-text password - always the output of BCrypt hashing (see AuthController).
     @Column(nullable = false)
@@ -40,6 +55,9 @@ public class User {
 
     public String getEmail() { return email; }
     public void setEmail(String email) { this.email = email; }
+
+    public String getEmailHash() { return emailHash; }
+    public void setEmailHash(String emailHash) { this.emailHash = emailHash; }
 
     public String getPasswordHash() { return passwordHash; }
     public void setPasswordHash(String passwordHash) { this.passwordHash = passwordHash; }

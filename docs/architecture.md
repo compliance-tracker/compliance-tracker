@@ -45,6 +45,7 @@ a single directory before this split (issue #90):
 | `notifications` | `NotificationSender` interface (reminders), `EmailNotificationSender`, `LoggingNotificationSender`; `AuthEmailSender` interface (password reset #37, email verification #36), `EmailAuthEmailSender`, `LoggingAuthEmailSender` |
 | `queue` | `SqsDispatchService`, `ReminderWorkerService`, `ReminderMessage`, `DlqMonitorService` (issue #18) |
 | `rules` | Pure rules-engine logic (`RuleEngine`, `Deadline`, `ObligationType`) — predates this split, was already its own package |
+| `security` | `EncryptedStringConverter` (column-level AES-256-GCM encryption at rest), `EmailHasher` (deterministic HMAC-SHA256 lookup hash for `User.email`) — issue #63 |
 | *(root)* | `ComplianceTrackerApplication` (entry point), `HelloController` (smoke test) |
 
 Test packages mirror this exactly (`src/test/.../auth`, `.../business`, etc.) - standard Maven/

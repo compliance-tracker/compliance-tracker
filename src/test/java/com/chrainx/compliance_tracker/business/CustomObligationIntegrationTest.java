@@ -5,6 +5,7 @@ import com.chrainx.compliance_tracker.auth.EmailVerificationTokenRepository;
 import com.chrainx.compliance_tracker.auth.RegistrationResponse;
 import com.chrainx.compliance_tracker.auth.UserRepository;
 import com.chrainx.compliance_tracker.auth.VerifyEmailRequest;
+import com.chrainx.compliance_tracker.security.EmailHasher;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -43,12 +44,15 @@ class CustomObligationIntegrationTest {
     @Autowired
     private DeadlineSyncService deadlineSyncService;
 
+    @Autowired
+    private EmailHasher emailHasher;
+
     private String registerAndGetToken() {
         String email = "custom-obligation-e2e-" + System.nanoTime() + "@example.com";
         String password = "a-real-password1";
         restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, password), RegistrationResponse.class);
 
-        Long userId = userRepository.findByEmail(email).orElseThrow().getId();
+        Long userId = userRepository.findByEmailHash(emailHasher.hash(email)).orElseThrow().getId();
         String verificationToken = emailVerificationTokenRepository.findAll().stream()
                 .filter(t -> t.getUserId().equals(userId))
                 .reduce((first, second) -> second)
