@@ -186,6 +186,37 @@
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
 			</plugin>
+			<!-- Test coverage reporting (issue #55) - prepare-agent instruments the JVM before
+			     any test runs; report generates the actual HTML/XML/CSV output. report's own
+			     default lifecycle binding is `verify`, later than plain `mvn test` (what CI's
+			     own Test step already runs) ever reaches - bound to `test` explicitly instead
+			     (via <phase>, and Maven's within-a-phase plugin execution order, which runs
+			     surefire's own `test` binding before this one since it's declared first) so a
+			     single `mvn test` run produces the report, not requiring a second `mvn verify`
+			     CI never otherwise needed. Deliberately no coverage threshold/gate here - the
+			     issue itself frames this as "a useful signal, not a blocker," and picking a real
+			     minimum percentage is its own separate decision, not implied by just wanting the
+			     number visible. -->
+			<plugin>
+				<groupId>org.jacoco</groupId>
+				<artifactId>jacoco-maven-plugin</artifactId>
+				<version>0.8.13</version>
+				<executions>
+					<execution>
+						<id>prepare-agent</id>
+						<goals>
+							<goal>prepare-agent</goal>
+						</goals>
+					</execution>
+					<execution>
+						<id>report</id>
+						<phase>test</phase>
+						<goals>
+							<goal>report</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
 		</plugins>
 	</build>
 

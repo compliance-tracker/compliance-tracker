@@ -23,7 +23,7 @@ business.
 | Framework  | Spring Boot 4.1.0                |
 | Build tool | Maven                            |
 | Database   | PostgreSQL 16 (Docker locally)   |
-| Testing    | JUnit 5 (via `spring-boot-starter-test`) |
+| Testing    | JUnit 5 (via `spring-boot-starter-test`), coverage via JaCoCo (issue #55) |
 | Queue      | AWS SQS (LocalStack locally/CI, real AWS at deployment) |
 | Migrations | Flyway                           |
 | Auth       | Spring Security + JWT (`jjwt`)   |
@@ -56,6 +56,14 @@ re-run the `create-queue` step regardless (see docs/architecture.md for the full
 
 `jwt.secret`/`spring.datasource.password` default to placeholder values safe for local/CI use
 only — see [docs/security.md](docs/security.md) before deploying this anywhere real.
+
+### Test coverage (issue #55)
+
+`./mvnw test` produces a full JaCoCo coverage report at `target/site/jacoco/index.html` (open it
+directly in a browser) — no separate `mvn verify` needed, no third-party account. CI uploads the
+same report as a build artifact on every run (downloadable from the workflow run's own page),
+whether or not the tests themselves passed. Informational only — no coverage percentage is
+enforced as a merge gate.
 
 ### Running with Docker (issue #52)
 
