@@ -1,5 +1,11 @@
 package com.chrainx.compliance_tracker.auth;
 
+import com.chrainx.compliance_tracker.business.BusinessRepository;
+import com.chrainx.compliance_tracker.business.BusinessResponse;
+import com.chrainx.compliance_tracker.business.CustomObligationRepository;
+import com.chrainx.compliance_tracker.business.CustomObligationResponse;
+import com.chrainx.compliance_tracker.business.WorkPassRepository;
+import com.chrainx.compliance_tracker.business.WorkPassResponse;
 import com.chrainx.compliance_tracker.error.ApiError;
 import com.chrainx.compliance_tracker.notifications.AuthEmailSender;
 import com.chrainx.compliance_tracker.security.EmailHasher;
@@ -8,6 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
@@ -15,6 +22,7 @@ import org.springframework.web.bind.annotation.*;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Date;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -31,6 +39,9 @@ public class AuthController {
     private final EmailVerificationTokenRepository emailVerificationTokenRepository;
     private final AuthEmailSender authEmailSender;
     private final EmailHasher emailHasher;
+    private final BusinessRepository businessRepository;
+    private final WorkPassRepository workPassRepository;
+    private final CustomObligationRepository customObligationRepository;
     private final long passwordResetExpirationMs;
     private final long emailVerificationExpirationMs;
 
@@ -40,6 +51,8 @@ public class AuthController {
                            PasswordResetTokenRepository passwordResetTokenRepository,
                            EmailVerificationTokenRepository emailVerificationTokenRepository,
                            AuthEmailSender authEmailSender, EmailHasher emailHasher,
+                           BusinessRepository businessRepository, WorkPassRepository workPassRepository,
+                           CustomObligationRepository customObligationRepository,
                            @Value("${auth.password-reset-expiration-ms}") long passwordResetExpirationMs,
                            @Value("${auth.email-verification-expiration-ms}") long emailVerificationExpirationMs) {
         this.userRepository = userRepository;
@@ -51,6 +64,9 @@ public class AuthController {
         this.emailVerificationTokenRepository = emailVerificationTokenRepository;
         this.authEmailSender = authEmailSender;
         this.emailHasher = emailHasher;
+        this.businessRepository = businessRepository;
+        this.workPassRepository = workPassRepository;
+        this.customObligationRepository = customObligationRepository;
         this.passwordResetExpirationMs = passwordResetExpirationMs;
         this.emailVerificationExpirationMs = emailVerificationExpirationMs;
     }
@@ -354,6 +370,42 @@ public class AuthController {
                 });
 
         return ResponseEntity.ok().build();
+    }
+
+    // Issue #48 (PDPA compliance review, Access & Correction Obligation): a real, complete copy
+    // of everything this account has given the app - not paginated, since a genuine export needs
+    // to actually be everything, not one page of it. currentUser is already the caller's own
+    // real entity (JwtAuthenticationFilter resolved it), so there's no ownership check to make
+    // here the way every other endpoint needs - a user can only ever export their own account.
+    @GetMapping("/account/export")
+    public ResponseEntity<AccountExportResponse> exportAccount(@AuthenticationPrincipal User currentUser) {
+        List<AccountExportResponse.BusinessExport> businesses = businessRepository.findByOwnerId(currentUser.getId())
+                .stream()
+                .map(business -> new AccountExportResponse.BusinessExport(
+                        BusinessResponse.from(business),
+                        workPassRepository.findByBusinessId(business.getId()).stream().map(WorkPassResponse::from).toList(),
+                        customObligationRepository.findByBusinessId(business.getId()).stream()
+                                .map(CustomObligationResponse::from).toList()
+                ))
+                .toList();
+
+        return ResponseEntity.ok(new AccountExportResponse(
+                currentUser.getEmail(), currentUser.isEmailVerified(), businesses));
+    }
+
+    // Issue #48 (PDPA compliance review, Retention Limitation Obligation): a real way to delete
+    // an account and stop retaining its data, not just a policy saying data isn't kept longer
+    // than necessary. Deleting the User row cascades, at the DB level, to every business (and
+    // transitively its work passes/deadline records/custom obligations), every idempotency key,
+    // and every password-reset/email-verification token (V13 migration) - same
+    // "handled at the DB level, correct regardless of how a row ever gets deleted" reasoning V3
+    // already established for a business's own dependents. No confirmation step here (that's a
+    // frontend concern, same as business deletion's own confirmation dialog) - this endpoint
+    // does exactly what it says, immediately.
+    @DeleteMapping("/account")
+    public ResponseEntity<Void> deleteAccount(@AuthenticationPrincipal User currentUser) {
+        userRepository.delete(currentUser);
+        return ResponseEntity.noContent().build();
     }
 
     private String extractBearerToken(HttpServletRequest httpRequest) {

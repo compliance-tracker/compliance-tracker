@@ -111,6 +111,9 @@ behalf. Try-it-out against a real protected endpoint by registering/logging in v
   secrets handling, and the security-relevant bugs found and fixed (including a critical IDOR).
 - [docs/notifications.md](docs/notifications.md) — configuring real email (Gmail SMTP) or
   previewing emails locally with Mailpit.
+- [docs/privacy.md](docs/privacy.md) — what's collected and why, how to export or delete your
+  data, and known gaps against a full PDPA compliance program (no DPO appointed, no formal breach
+  process).
 
 ## Status
 
