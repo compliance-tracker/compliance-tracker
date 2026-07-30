@@ -1,5 +1,6 @@
 package com.chrainx.compliance_tracker.auth;
 
+import com.chrainx.compliance_tracker.security.EmailHasher;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -19,8 +20,11 @@ class JwtAuthenticationFilterTest {
     private final JwtService jwtService = mock(JwtService.class);
     private final UserRepository userRepository = mock(UserRepository.class);
     private final TokenBlocklist tokenBlocklist = mock(TokenBlocklist.class);
+    // Real instance, not mocked - EmailHasher is pure logic (issue #63), same reasoning as
+    // RuleEngine being used as-is elsewhere in this project's mocked-repository unit tests.
+    private final EmailHasher emailHasher = new EmailHasher("I9FNAHshRkw+oPgsfjRlvm+F3SNRE30qlcWwcY5Tn7A=");
     private final JwtAuthenticationFilter filter =
-            new JwtAuthenticationFilter(jwtService, userRepository, tokenBlocklist);
+            new JwtAuthenticationFilter(jwtService, userRepository, tokenBlocklist, emailHasher);
 
     @Test
     void isValidForUser_isTrue_whenUserHasNeverResetTheirPassword() {

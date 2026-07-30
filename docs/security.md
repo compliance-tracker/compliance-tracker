@@ -222,4 +222,44 @@ default, but does **not** erase the old value from git history — that requires
 rewriting history (destructive, requires a force-push, breaks other clones), not something to
 do without a real reason. Since nothing has ever been deployed with these values protecting
 anything real, the practical exposure today is effectively zero — but a real deployment must
-generate genuinely fresh values, never reuse the placeholders (issue #40).
+generate genuinely fresh values, never reuse the placeholders (issue #40). `app.encryption-key`
+(see below, issue #63) follows the exact same pattern — same generation command, same
+`ENCRYPTION_KEY` env var override, same "committed placeholder, permanently public" caveat.
+
+## Encryption at rest (issue #63)
+
+`User.email`, `Business.name`, and `WorkPass.employeeName` are encrypted at the column level
+(AES-256-GCM, authenticated — a tampered or wrong-key ciphertext throws rather than silently
+decrypting to garbage) via `EncryptedStringConverter`, a JPA `AttributeConverter` applied per
+field with `@Convert(converter = EncryptedStringConverter.class)`. Every other line of
+application code that reads/writes these fields is completely unaware encryption is happening at
+all - the entity's getter/setter still return/accept a plain `String`, same as before.
+
+**Deliberately non-deterministic** - a fresh random 12-byte IV every single encryption, even for
+the exact same plaintext twice in a row, so two rows never reveal equality by ciphertext
+comparison alone. That's exactly right for confidentiality, and exactly wrong for
+`User.findByEmail` (login, registration's uniqueness check, password reset, etc. all need an
+exact-match lookup) or the DB's own `UNIQUE` constraint, which used to sit directly on the
+`email` column and would have become silently meaningless once email stopped being comparable by
+equality.
+
+**The fix for `email` specifically:** a separate `User.emailHash` column - a deterministic
+HMAC-SHA256 of the raw email (`EmailHasher`, same `app.encryption-key`, different algorithm - not
+the same key reused for the same purpose twice), computed once at registration (there's no
+"change my email" feature, so that's the only place it's ever needed) and given the `UNIQUE`
+constraint the encrypted column can no longer carry. Every real lookup - `AuthController`,
+`JwtAuthenticationFilter` - goes through `UserRepository.findByEmailHash(emailHasher.hash(...))`
+instead of a derived `findByEmail`, which can't exist anymore (it would compare a plaintext
+argument against ciphertext and never match). HMAC (keyed), not a plain unsalted hash - an
+attacker who obtained the database still can't build a rainbow table against `emailHash` without
+also having `app.encryption-key`.
+
+`Business.name`/`WorkPass.employeeName` don't need an equivalent hash column - neither is ever
+looked up by exact match anywhere in this app (only ever fetched by `id`/`businessId`), so the
+plain encrypted column is sufficient on its own.
+
+**Existing rows couldn't be migrated in place** - re-encrypting already-stored plaintext isn't
+expressible in plain SQL, so `V12__encrypt_pii_fields.sql` clears `app_user`/`business`/etc.
+first, the same precedent `V2` already set when auth was first added ("existing business rows
+were test/portfolio data only, cleared before this migration") - everything in the local
+DB/CI is test data, not anything real, given #5's deliberate deploy-on-hold decision.

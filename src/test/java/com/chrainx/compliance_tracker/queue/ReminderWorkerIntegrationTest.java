@@ -6,6 +6,7 @@ import com.chrainx.compliance_tracker.business.DeadlineRecordRepository;
 import com.chrainx.compliance_tracker.business.DeadlineSyncService;
 import com.chrainx.compliance_tracker.auth.UserRepository;
 import com.chrainx.compliance_tracker.business.BusinessRepository;
+import com.chrainx.compliance_tracker.security.EmailHasher;
 
 import com.chrainx.compliance_tracker.rules.RuleEngine;
 import org.junit.jupiter.api.Test;
@@ -48,10 +49,18 @@ class ReminderWorkerIntegrationTest {
     @Autowired
     private ReminderWorkerService reminderWorkerService;
 
+    @Autowired
+    private EmailHasher emailHasher;
+
     @Test
     void fullPipeline_syncThenDispatchThenWorker_marksReminderSent() {
+        String ownerEmail = "reminder-worker-test-" + System.nanoTime() + "@example.com";
         User owner = new User();
-        owner.setEmail("reminder-worker-test-" + System.nanoTime() + "@example.com");
+        owner.setEmail(ownerEmail);
+        // Issue #63: emailHash is now NOT NULL/UNIQUE at the DB level - a fixture User built
+        // directly (bypassing AuthController.register, which is the only place this is normally
+        // computed) needs to set it explicitly too.
+        owner.setEmailHash(emailHasher.hash(ownerEmail));
         owner.setPasswordHash("unused-in-this-test");
         userRepository.save(owner);
 

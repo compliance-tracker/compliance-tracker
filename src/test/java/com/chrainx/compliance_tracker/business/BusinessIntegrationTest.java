@@ -6,6 +6,7 @@ import com.chrainx.compliance_tracker.auth.RegistrationResponse;
 import com.chrainx.compliance_tracker.auth.UserRepository;
 import com.chrainx.compliance_tracker.auth.VerifyEmailRequest;
 import com.chrainx.compliance_tracker.error.ApiError;
+import com.chrainx.compliance_tracker.security.EmailHasher;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -58,6 +59,9 @@ class BusinessIntegrationTest {
     @Autowired
     private EmailVerificationTokenRepository emailVerificationTokenRepository;
 
+    @Autowired
+    private EmailHasher emailHasher;
+
     // Issue #120: register no longer returns usable tokens, and login requires a verified email -
     // same real register/verify/login flow AuthIntegrationTest uses.
     private String registerAndGetToken() {
@@ -65,7 +69,7 @@ class BusinessIntegrationTest {
         String password = "a-real-password1";
         restTemplate.postForEntity("/api/auth/register", new AuthRequest(email, password), RegistrationResponse.class);
 
-        Long userId = userRepository.findByEmail(email).orElseThrow().getId();
+        Long userId = userRepository.findByEmailHash(emailHasher.hash(email)).orElseThrow().getId();
         String verificationToken = emailVerificationTokenRepository.findAll().stream()
                 .filter(t -> t.getUserId().equals(userId))
                 .reduce((first, second) -> second)
