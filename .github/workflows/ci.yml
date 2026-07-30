@@ -72,3 +72,17 @@ jobs:
 
       - name: Test
         run: ./mvnw -B test
+
+      # Issue #55 - JaCoCo's report goal (pom.xml, bound to the test phase) already produced
+      # this from the Test step above, no extra Maven invocation needed. Uploaded as a build
+      # artifact rather than a third-party service (Codecov etc.) - no new account/token needed,
+      # and it's still genuinely useful: download it from the workflow run, open index.html,
+      # done. always() so a coverage report is still available to inspect even on a run where
+      # tests themselves failed, not only on green runs.
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-coverage-report
+          path: target/site/jacoco/
+          retention-days: 30
