@@ -57,6 +57,28 @@ re-run the `create-queue` step regardless (see docs/architecture.md for the full
 `jwt.secret`/`spring.datasource.password` default to placeholder values safe for local/CI use
 only — see [docs/security.md](docs/security.md) before deploying this anywhere real.
 
+### Running with Docker (issue #52)
+
+A `Dockerfile` builds and runs the app as a container — real prep work for eventual ECS/Fargate
+deployment (#5, deliberately on hold for cost reasons, not this), fully testable right now with
+nothing but Docker itself, no AWS account needed:
+
+```bash
+docker build -t compliance-tracker-backend .
+
+# Postgres/LocalStack (steps 1-2 above) still need to be reachable - host.docker.internal is
+# Docker Desktop's own hostname for "the host machine", since the containerized app can't reach
+# localhost:5434/4566 the way a directly-run ./mvnw process can.
+docker run --rm -p 8081:8081 \
+  -e SPRING_DATASOURCE_URL=jdbc:postgresql://host.docker.internal:5434/compliance_tracker \
+  compliance-tracker-backend
+```
+
+Multi-stage (a JDK build stage, a much smaller JRE-only runtime stage), runs as a non-root user.
+No `HEALTHCHECK` baked into the image itself — a real deployment's own task definition/pod spec
+should point its health check at `GET /actuator/health` (issue #44) directly, not a second,
+possibly-drifting copy of that same logic.
+
 ## Compliance rules
 
 | Obligation | Rule | Source | Status |
