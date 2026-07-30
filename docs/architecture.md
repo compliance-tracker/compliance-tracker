@@ -38,7 +38,7 @@ a single directory before this split (issue #90):
 | Package | Contents |
 |---|---|
 | `auth` | `AuthController`/`AuthRequest`/`AuthResponse`, `JwtService`, `JwtAuthenticationFilter`, `LoginRateLimiter`, `TokenBlocklist`, `User`, `UserRepository`, `PasswordResetToken`/`PasswordResetTokenRepository`, `ForgotPasswordRequest`/`ResetPasswordRequest`, `EmailVerificationToken`/`EmailVerificationTokenRepository`, `VerifyEmailRequest` |
-| `business` | `Business`/`BusinessRequest`/`BusinessResponse`/`BusinessController`/`BusinessRepository`, `WorkPass`/`WorkPassRequest`/`WorkPassResponse`/`WorkPassController`/`WorkPassRepository`, `DeadlineRecord`/`DeadlineRecordRepository`, `DeadlineSyncService`, `IdempotencyKey`/`IdempotencyKeyRepository`, `PageResponse` (pagination, issue #49) |
+| `business` | `Business`/`BusinessRequest`/`BusinessResponse`/`BusinessController`/`BusinessRepository`, `WorkPass`/`WorkPassRequest`/`WorkPassResponse`/`WorkPassController`/`WorkPassRepository`, `CustomObligation`/`CustomObligationRequest`/`CustomObligationResponse`/`CustomObligationController`/`CustomObligationRepository` (issue #59), `DeadlineRecord`/`DeadlineRecordRepository`, `DeadlineSyncService`, `IdempotencyKey`/`IdempotencyKeyRepository`, `PageResponse` (pagination, issue #49) |
 | `config` | `SecurityConfig`, `CorsConfig`, `SchedulingConfig`, `SqsConfig`, `OpenApiConfig` (issue #21), `LoggingConfig` (issue #51) — cross-cutting `@Configuration` classes, not owned by any one feature |
 | `error` | `ApiError`, `GlobalExceptionHandler` — the consistent structured error response format (issue #47), also cross-cutting |
 | `logging` | `CorrelationIdFilter`, `CorrelationIdSupport` (issue #51) — request/scheduled-run correlation IDs, see "Request correlation IDs" below |
@@ -76,11 +76,18 @@ Gradle convention, and it kept import parity easy to check while doing the split
 - **`WorkPassRepository`** — Spring Data JPA repository. Includes `findByBusinessId(Long)`,
   whose implementation Spring derives entirely from the method name (no query written by hand).
 - **`RuleEngine`** — pure, unit-tested Java logic (`rules` package). Given a `Business`, its
-  `WorkPass`es, and a reference date, computes the list of currently-applicable `Deadline`s
-  (each an `ObligationType` + due `LocalDate`). Has no dependency on the database or HTTP layer,
-  and takes the reference date as a parameter rather than calling `LocalDate.now()` internally,
-  so tests are fully deterministic. Implements all three obligations: ACRA Annual Return, GST
-  F5, and Employment Pass renewal (one deadline per `WorkPass`). Also exposes
+  `WorkPass`es, its `CustomObligation`s, and a reference date, computes the list of
+  currently-applicable `Deadline`s (each an `ObligationType` + due `LocalDate`, plus a
+  `customName`/`customObligationId` pair, both null except for `ObligationType.CUSTOM`). Has no
+  dependency on the database or HTTP layer, and takes the reference date as a parameter rather
+  than calling `LocalDate.now()` internally, so tests are fully deterministic. Implements the
+  three built-in obligations — ACRA Annual Return, GST F5, and Employment Pass renewal (one
+  deadline per `WorkPass`) — plus a business's own custom obligations (issue #59): a one-off
+  (`recurrenceMonths` null) uses its stored `dueDate` as-is, even once overdue (same "an overdue
+  deadline stays visible" behavior as work pass renewal); a recurring one recomputes the actual
+  next occurrence live from its fixed anchor `dueDate` every time, the same
+  never-mutate-the-stored-date pattern `nextAcraDeadline` already uses for ACRA, just with a
+  configurable month step (`nextRecurringDeadline`) instead of a fixed 12. Also exposes
   `firstFinancialYearExceedsAcraLimit(incorporationDate, financialYearEnd)` (issue #31, sourced
   from Companies Act 1967 s.198) — a validation helper, not a deadline computation; a plain
   literal-date comparison (`financialYearEnd.isAfter(incorporationDate.plusMonths(18))`), only
@@ -129,6 +136,14 @@ Gradle convention, and it kept import parity easy to check while doing the split
   nested under the owning business — every operation first checks the business belongs to the
   caller (same `findByIdAndOwnerId` scoping as `BusinessController`) before touching any work
   pass at all.
+- **`CustomObligationController`** (issue #59) — exposes `POST`/`GET`/`PUT`/`DELETE` on
+  `/api/businesses/{id}/custom-obligations`, same nested-under-the-owning-business scoping as
+  `WorkPassController`. `PUT` also clears any stale, not-yet-reminded `DeadlineRecord` tied to the
+  obligation (`deleteByCustomObligationIdAndReminderSentFalse`) — the same #30 lesson as a
+  business's FYE changing: without it, the next sync would insert the newly-correct deadline
+  alongside the old, now-wrong one instead of replacing it. `DELETE` relies on the DB's own
+  `ON DELETE CASCADE` (`custom_obligation_id` FK, `V11` migration) to clean up its
+  `DeadlineRecord`s, the same pattern `V3` already established for deleting a business.
 - **`HelloController`** — `GET /hello`, a minimal smoke-test endpoint from initial setup.
 
 ## API documentation (issue #21)
@@ -213,21 +228,27 @@ wraps around the delegation to its private impl, not the other way around.
   computation can't carry: state, specifically `reminderSent`. `rules.Deadline` itself stays
   a pure in-memory value with no DB knowledge.
 - **`DeadlineRecordRepository`** — Spring Data JPA repository for `DeadlineRecord`, including
-  `existsByBusinessIdAndObligationTypeAndDueDate` (dedupe check), `findByReminderSentFalse`
+  `existsByBusinessIdAndObligationTypeAndDueDate` (dedupe check for the 3 built-in obligation
+  types), `existsByCustomObligationIdAndDueDate` (the same dedupe check for `ObligationType.CUSTOM`
+  — issue #59: a business can have several custom obligations that happen to share the same due
+  date, which the plain `(business, obligationType, dueDate)` key can't tell apart, so a custom
+  obligation's own id is the real disambiguator instead), `findByReminderSentFalse`
   (the starting point for the "what needs a reminder" query — see `findDueSoonAndUnreminded`
   below for why the actual due-date cutoff isn't part of this query anymore), and
-  `deleteByBusinessIdAndObligationTypeAndReminderSentFalse` (issue #30) — called from
-  `BusinessController.updateBusiness` whenever `financialYearEnd` actually changes, to remove
-  the now-stale, not-yet-reminded ACRA deadline the *old* FYE produced. `DeadlineSyncService`'s
-  own dedupe check only ever prevents re-inserting a deadline that's already correct; it has no
-  way to remove one that's become wrong because the FYE it was computed from changed underneath
-  it, so without this cleanup a business that changes FYE would end up with the stale record
+  `deleteByBusinessIdAndObligationTypeAndReminderSentFalse`/`deleteByCustomObligationIdAndReminderSentFalse`
+  (issue #30, and its issue #59 counterpart) — called from `BusinessController.updateBusiness`
+  whenever `financialYearEnd` actually changes, and from `CustomObligationController.updateCustomObligation`
+  whenever a custom obligation's own `dueDate`/`recurrenceMonths` changes, to remove the
+  now-stale, not-yet-reminded deadline the *old* value produced. `DeadlineSyncService`'s own
+  dedupe check only ever prevents re-inserting a deadline that's already correct; it has no way
+  to remove one that's become wrong because the value it was computed from changed underneath
+  it, so without this cleanup an edited business/obligation would end up with the stale record
   still sitting in the reminder queue right alongside the newly-synced correct one.
 - **`DeadlineSyncService`** — `@Service` with a `@Scheduled` method (`syncDeadlines`, daily at
   01:00 Singapore time — `zone = "Asia/Singapore"` explicitly, issue #28, not the server's own
-  default timezone) that recomputes every business's deadlines from scratch via `RuleEngine` each run and
-  persists any not already stored, skipping ones that already exist so `reminderSent` isn't
-  reset. Also exposes `findDueSoonAndUnreminded(referenceDate)`, which the dispatch step
+  default timezone) that recomputes every business's deadlines (built-in *and* custom, issue #59)
+  from scratch via `RuleEngine` each run and persists any not already stored, skipping ones that
+  already exist so `reminderSent` isn't reset. Also exposes `findDueSoonAndUnreminded(referenceDate)`, which the dispatch step
   (`SqsDispatchService`) calls next to decide what actually gets pushed to the reminder queue —
   "due soon" is evaluated per-record against that record's own `business.leadTimeDays` (issue
   #53), not a single global window, so it's `@Transactional(readOnly = true)`: `Business` is a

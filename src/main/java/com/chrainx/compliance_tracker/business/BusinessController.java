@@ -28,21 +28,24 @@ public class BusinessController {
 
     private final BusinessRepository businessRepository;
     private final WorkPassRepository workPassRepository;
+    private final CustomObligationRepository customObligationRepository;
     private final IdempotencyKeyRepository idempotencyKeyRepository;
     private final DeadlineRecordRepository deadlineRecordRepository;
     private final RuleEngine ruleEngine;
 
     // @Autowired: Spring sees this constructor needs a BusinessRepository, WorkPassRepository,
-    // IdempotencyKeyRepository, DeadlineRecordRepository, and RuleEngine, and since it already
-    // knows how to create all five (repositories are auto-implemented interfaces, RuleEngine is
-    // @Component), it builds them and passes them in automatically - we never call
-    // `new BusinessController(...)` ourselves.
+    // CustomObligationRepository, IdempotencyKeyRepository, DeadlineRecordRepository, and
+    // RuleEngine, and since it already knows how to create all six (repositories are
+    // auto-implemented interfaces, RuleEngine is @Component), it builds them and passes them in
+    // automatically - we never call `new BusinessController(...)` ourselves.
     @Autowired
     public BusinessController(BusinessRepository businessRepository, WorkPassRepository workPassRepository,
+                               CustomObligationRepository customObligationRepository,
                                IdempotencyKeyRepository idempotencyKeyRepository,
                                DeadlineRecordRepository deadlineRecordRepository, RuleEngine ruleEngine) {
         this.businessRepository = businessRepository;
         this.workPassRepository = workPassRepository;
+        this.customObligationRepository = customObligationRepository;
         this.idempotencyKeyRepository = idempotencyKeyRepository;
         this.deadlineRecordRepository = deadlineRecordRepository;
         this.ruleEngine = ruleEngine;
@@ -158,7 +161,9 @@ public class BusinessController {
         }
 
         List<WorkPass> workPasses = workPassRepository.findByBusinessId(id);
-        List<Deadline> deadlines = ruleEngine.computeDeadlines(business.get(), workPasses, LocalDate.now(RuleEngine.SINGAPORE_TIME_ZONE));
+        List<CustomObligation> customObligations = customObligationRepository.findByBusinessId(id);
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(
+                business.get(), workPasses, customObligations, LocalDate.now(RuleEngine.SINGAPORE_TIME_ZONE));
         return ResponseEntity.ok(deadlines);
     }
 

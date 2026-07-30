@@ -1,6 +1,7 @@
 package com.chrainx.compliance_tracker.notifications;
 import com.chrainx.compliance_tracker.business.DeadlineRecord;
 import com.chrainx.compliance_tracker.business.Business;
+import com.chrainx.compliance_tracker.rules.ObligationType;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,8 +20,14 @@ public class LoggingNotificationSender implements NotificationSender {
 
     @Override
     public void send(Business business, DeadlineRecord deadlineRecord) {
+        // Issue #59: CUSTOM's own customName is the actual useful info here - the bare enum
+        // value alone would just print "CUSTOM" for every one of a business's custom obligations,
+        // indistinguishable from each other in the log.
+        Object obligationLabel = deadlineRecord.getObligationType() == ObligationType.CUSTOM
+                ? deadlineRecord.getCustomName()
+                : deadlineRecord.getObligationType();
         log.info("[REMINDER] Business '{}' (id={}): {} due {}",
                 business.getName(), business.getId(),
-                deadlineRecord.getObligationType(), deadlineRecord.getDueDate());
+                obligationLabel, deadlineRecord.getDueDate());
     }
 }

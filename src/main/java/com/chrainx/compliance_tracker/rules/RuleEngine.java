@@ -1,6 +1,7 @@
 package com.chrainx.compliance_tracker.rules;
 
 import com.chrainx.compliance_tracker.business.Business;
+import com.chrainx.compliance_tracker.business.CustomObligation;
 import com.chrainx.compliance_tracker.business.WorkPass;
 import org.springframework.stereotype.Component;
 
@@ -30,7 +31,8 @@ public class RuleEngine {
     // ZoneId.of("Asia/Singapore") at each call site where a typo could silently drift.
     public static final ZoneId SINGAPORE_TIME_ZONE = ZoneId.of("Asia/Singapore");
 
-    public List<Deadline> computeDeadlines(Business business, List<WorkPass> workPasses, LocalDate referenceDate) {
+    public List<Deadline> computeDeadlines(Business business, List<WorkPass> workPasses,
+                                            List<CustomObligation> customObligations, LocalDate referenceDate) {
         List<Deadline> deadlines = new ArrayList<>();
 
         // ACRA rule: due 7 months after Financial Year End (standard, non-listed company case
@@ -60,6 +62,18 @@ public class RuleEngine {
             ));
         }
 
+        // Custom obligations (issue #59) - a one-off (recurrenceMonths null) just uses dueDate
+        // as-is, even if it's already in the past (same as WORK_PASS_RENEWAL above: an overdue
+        // deadline should keep showing, not silently disappear). A recurring one recomputes the
+        // actual next occurrence from its fixed anchor date every time, the same
+        // never-mutate-the-stored-date pattern nextAcraDeadline already uses for ACRA.
+        for (CustomObligation obligation : customObligations) {
+            LocalDate dueDate = obligation.getRecurrenceMonths() == null
+                    ? obligation.getDueDate()
+                    : nextRecurringDeadline(obligation.getDueDate(), obligation.getRecurrenceMonths(), referenceDate);
+            deadlines.add(new Deadline(ObligationType.CUSTOM, dueDate, obligation.getName(), obligation.getId()));
+        }
+
         return deadlines;
     }
 
@@ -73,6 +87,18 @@ public class RuleEngine {
         LocalDate deadline = financialYearEnd.plusMonths(7);
         while (deadline.isBefore(referenceDate)) {
             deadline = deadline.plusYears(1);
+        }
+        return deadline;
+    }
+
+    // Same shape as nextAcraDeadline above, generalized to a configurable month step instead of
+    // a fixed 12 - a custom obligation's own recurrenceMonths (issue #59). anchorDate is never
+    // mutated (same reasoning as financialYearEnd never being mutated for ACRA); this just keeps
+    // adding one interval at a time until the result isn't before referenceDate.
+    private LocalDate nextRecurringDeadline(LocalDate anchorDate, int recurrenceMonths, LocalDate referenceDate) {
+        LocalDate deadline = anchorDate;
+        while (deadline.isBefore(referenceDate)) {
+            deadline = deadline.plusMonths(recurrenceMonths);
         }
         return deadline;
     }
