@@ -45,10 +45,17 @@ class AuthControllerTest {
     // Real instance, not mocked - EmailHasher is pure logic (issue #63), same reasoning as
     // JwtService/LoginRateLimiter/TokenBlocklist above.
     private final EmailHasher emailHasher = new EmailHasher("I9FNAHshRkw+oPgsfjRlvm+F3SNRE30qlcWwcY5Tn7A=");
+    private final com.chrainx.compliance_tracker.business.BusinessRepository businessRepository =
+            mock(com.chrainx.compliance_tracker.business.BusinessRepository.class);
+    private final com.chrainx.compliance_tracker.business.WorkPassRepository workPassRepository =
+            mock(com.chrainx.compliance_tracker.business.WorkPassRepository.class);
+    private final com.chrainx.compliance_tracker.business.CustomObligationRepository customObligationRepository =
+            mock(com.chrainx.compliance_tracker.business.CustomObligationRepository.class);
 
     private final AuthController controller = new AuthController(userRepository, passwordEncoder, jwtService,
             loginRateLimiter, tokenBlocklist, passwordResetTokenRepository, emailVerificationTokenRepository,
-            authEmailSender, emailHasher, 3_600_000L, 604_800_000L);
+            authEmailSender, emailHasher, businessRepository, workPassRepository, customObligationRepository,
+            3_600_000L, 604_800_000L);
 
     private MockHttpServletRequest requestFrom(String ip) {
         MockHttpServletRequest request = new MockHttpServletRequest();
@@ -608,5 +615,75 @@ class AuthControllerTest {
         ResponseEntity<?> response = controller.verifyEmail(new VerifyEmailRequest("expired-token"));
 
         assertEquals(401, response.getStatusCode().value());
+    }
+
+    // Issue #48 (PDPA compliance review).
+
+    @Test
+    void exportAccount_returnsTheCallersOwnEmailAndBusinesses_nestingWorkPassesAndCustomObligations() {
+        User currentUser = new User();
+        currentUser.setId(1L);
+        currentUser.setEmail("owner@example.com");
+        currentUser.setEmailVerified(true);
+
+        com.chrainx.compliance_tracker.business.Business business =
+                new com.chrainx.compliance_tracker.business.Business();
+        business.setId(10L);
+        business.setName("Export Test Co");
+        business.setFinancialYearEnd(java.time.LocalDate.of(2026, 12, 31));
+
+        com.chrainx.compliance_tracker.business.WorkPass workPass =
+                new com.chrainx.compliance_tracker.business.WorkPass();
+        workPass.setId(20L);
+        workPass.setEmployeeName("Jane Doe");
+
+        com.chrainx.compliance_tracker.business.CustomObligation obligation =
+                new com.chrainx.compliance_tracker.business.CustomObligation();
+        obligation.setId(30L);
+        obligation.setName("Renew business insurance");
+        obligation.setDueDate(java.time.LocalDate.of(2026, 9, 1));
+
+        when(businessRepository.findByOwnerId(1L)).thenReturn(java.util.List.of(business));
+        when(workPassRepository.findByBusinessId(10L)).thenReturn(java.util.List.of(workPass));
+        when(customObligationRepository.findByBusinessId(10L)).thenReturn(java.util.List.of(obligation));
+
+        ResponseEntity<AccountExportResponse> response = controller.exportAccount(currentUser);
+
+        assertEquals(200, response.getStatusCode().value());
+        AccountExportResponse body = response.getBody();
+        assertEquals("owner@example.com", body.email());
+        assertTrue(body.emailVerified());
+        assertEquals(1, body.businesses().size());
+        assertEquals("Export Test Co", body.businesses().get(0).business().name());
+        assertEquals(1, body.businesses().get(0).workPasses().size());
+        assertEquals("Jane Doe", body.businesses().get(0).workPasses().get(0).employeeName());
+        assertEquals(1, body.businesses().get(0).customObligations().size());
+        assertEquals("Renew business insurance", body.businesses().get(0).customObligations().get(0).name());
+    }
+
+    @Test
+    void exportAccount_withNoBusinesses_returnsAnEmptyList_notNull() {
+        User currentUser = new User();
+        currentUser.setId(1L);
+        currentUser.setEmail("owner@example.com");
+        when(businessRepository.findByOwnerId(1L)).thenReturn(java.util.List.of());
+
+        ResponseEntity<AccountExportResponse> response = controller.exportAccount(currentUser);
+
+        assertEquals(200, response.getStatusCode().value());
+        assertTrue(response.getBody().businesses().isEmpty());
+    }
+
+    @Test
+    void deleteAccount_deletesTheCallersOwnUserRow() {
+        // Everything else (businesses, work passes, tokens, etc.) cascades at the DB level
+        // (V13 migration) - the controller's own job is just deleting the User row itself.
+        User currentUser = new User();
+        currentUser.setId(1L);
+
+        ResponseEntity<Void> response = controller.deleteAccount(currentUser);
+
+        assertEquals(204, response.getStatusCode().value());
+        verify(userRepository).delete(currentUser);
     }
 }

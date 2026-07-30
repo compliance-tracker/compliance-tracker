@@ -263,3 +263,40 @@ expressible in plain SQL, so `V12__encrypt_pii_fields.sql` clears `app_user`/`bu
 first, the same precedent `V2` already set when auth was first added ("existing business rows
 were test/portfolio data only, cleared before this migration") - everything in the local
 DB/CI is test data, not anything real, given #5's deliberate deploy-on-hold decision.
+
+## Account data export and deletion (issue #48, PDPA compliance review)
+
+`GET /api/auth/account/export` and `DELETE /api/auth/account` — see
+[privacy.md](privacy.md) for the user-facing explanation and known gaps (no DPO appointed, no
+formal breach incident-response process — both real, deliberate, out of scope for an engineering
+task).
+
+Both endpoints act on `@AuthenticationPrincipal User currentUser` only - there's no id in the
+request path/body to validate ownership of, since a JWT-authenticated caller can only ever be
+themselves. This makes the usual "does this id belong to the caller" check that every other
+per-resource endpoint needs structurally unnecessary here.
+
+**Export** walks `businessRepository.findByOwnerId` (an unpaginated overload added alongside the
+existing paginated one used by `GET /api/businesses` - issue #49's pagination is right for a
+UI list, wrong for "give me everything," same "internal caller needs everything" reasoning
+`WorkPassRepository`/`CustomObligationRepository` already established) and nests each business's
+work passes and custom obligations inside a single `AccountExportResponse` JSON document.
+
+**Deletion** is a single `userRepository.delete(currentUser)` call - everything else disappears
+via `ON DELETE CASCADE`, not application code walking dependents in order. `V13__cascade_delete_
+user_dependents.sql` adds cascade to the four foreign keys referencing `app_user` that didn't
+already have it (`business.owner_id`, `idempotency_key.owner_id`,
+`password_reset_token.user_id`, `email_verification_token.user_id`) - none of them did, since
+nothing before this needed to delete a `User` row directly. `business`'s own dependents
+(`work_pass`/`deadline_record`/`custom_obligation`) already cascade from `business` itself
+(`V3`/`V11`), so cascading `business.owner_id → app_user` is enough to remove everything
+transitively in one cascade chain, the same "handled at the DB level, correct regardless of how a
+row ever gets deleted" reasoning `V3` established for a business's own dependents. Verified live:
+registering an account, creating a business with a work pass, calling `DELETE /api/auth/account`,
+then confirming directly via `psql` that the `app_user`/`business`/`work_pass` rows are all
+genuinely gone (not just that the endpoint returned `204`), and that the caller's now-orphaned
+token stops authenticating on the very next request.
+
+No confirmation step exists at the API level for either endpoint - that's a frontend concern
+(business deletion already has an equivalent confirmation dialog pattern to follow), not something
+the backend enforces.

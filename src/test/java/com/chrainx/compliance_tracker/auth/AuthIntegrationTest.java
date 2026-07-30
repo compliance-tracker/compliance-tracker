@@ -811,4 +811,94 @@ class AuthIntegrationTest {
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
     }
+
+    // Issue #48 (PDPA compliance review) - GET /api/auth/account/export and
+    // DELETE /api/auth/account, real HTTP end to end.
+
+    @Test
+    void exportAccount_returnsTheCallersOwnEmailAndBusinesses_notAnotherUsersData() {
+        String emailA = "auth-e2e-export-a-" + System.nanoTime() + "@example.com";
+        String emailB = "auth-e2e-export-b-" + System.nanoTime() + "@example.com";
+        String tokenA = registerVerifyAndLogin(emailA, "a-real-password1").token();
+        String tokenB = registerVerifyAndLogin(emailB, "a-real-password1").token();
+
+        HttpHeaders headersA = new HttpHeaders();
+        headersA.setBearerAuth(tokenA);
+        HttpHeaders headersB = new HttpHeaders();
+        headersB.setBearerAuth(tokenB);
+
+        com.chrainx.compliance_tracker.business.BusinessRequest businessRequest =
+                new com.chrainx.compliance_tracker.business.BusinessRequest(
+                        "Export Flow Co", java.time.LocalDate.of(2026, 12, 31), false, null, null);
+        ResponseEntity<com.chrainx.compliance_tracker.business.BusinessResponse> createResponse = restTemplate.postForEntity(
+                "/api/businesses", new HttpEntity<>(businessRequest, headersA),
+                com.chrainx.compliance_tracker.business.BusinessResponse.class);
+        Long businessId = createResponse.getBody().id();
+
+        restTemplate.postForEntity(
+                "/api/businesses/" + businessId + "/work-passes",
+                new HttpEntity<>(new com.chrainx.compliance_tracker.business.WorkPassRequest(
+                        "Jane Doe", java.time.LocalDate.of(2027, 6, 1)), headersA),
+                com.chrainx.compliance_tracker.business.WorkPassResponse.class);
+        restTemplate.postForEntity(
+                "/api/businesses/" + businessId + "/custom-obligations",
+                new HttpEntity<>(new com.chrainx.compliance_tracker.business.CustomObligationRequest(
+                        "Renew insurance", java.time.LocalDate.of(2026, 9, 1), null), headersA),
+                com.chrainx.compliance_tracker.business.CustomObligationResponse.class);
+
+        ResponseEntity<AccountExportResponse> exportA = restTemplate.exchange(
+                "/api/auth/account/export", org.springframework.http.HttpMethod.GET, new HttpEntity<>(headersA),
+                AccountExportResponse.class);
+        assertEquals(HttpStatus.OK, exportA.getStatusCode());
+        assertEquals(emailA, exportA.getBody().email());
+        assertTrue(exportA.getBody().businesses().stream()
+                .anyMatch(b -> b.business().name().equals("Export Flow Co")
+                        && b.workPasses().size() == 1
+                        && b.customObligations().size() == 1));
+
+        ResponseEntity<AccountExportResponse> exportB = restTemplate.exchange(
+                "/api/auth/account/export", org.springframework.http.HttpMethod.GET, new HttpEntity<>(headersB),
+                AccountExportResponse.class);
+        assertEquals(HttpStatus.OK, exportB.getStatusCode());
+        assertEquals(emailB, exportB.getBody().email());
+        assertTrue(exportB.getBody().businesses().isEmpty());
+    }
+
+    @Test
+    void deleteAccount_genuinelyRemovesTheUserAndCascadesToEverythingTheyOwn() {
+        String email = "auth-e2e-delete-account-" + System.nanoTime() + "@example.com";
+        String token = registerVerifyAndLogin(email, "a-real-password1").token();
+        Long userId = userRepository.findByEmailHash(emailHasher.hash(email)).orElseThrow().getId();
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+
+        com.chrainx.compliance_tracker.business.BusinessRequest businessRequest =
+                new com.chrainx.compliance_tracker.business.BusinessRequest(
+                        "Delete Flow Co", java.time.LocalDate.of(2026, 12, 31), false, null, null);
+        ResponseEntity<com.chrainx.compliance_tracker.business.BusinessResponse> createResponse = restTemplate.postForEntity(
+                "/api/businesses", new HttpEntity<>(businessRequest, headers),
+                com.chrainx.compliance_tracker.business.BusinessResponse.class);
+        Long businessId = createResponse.getBody().id();
+
+        restTemplate.postForEntity(
+                "/api/businesses/" + businessId + "/work-passes",
+                new HttpEntity<>(new com.chrainx.compliance_tracker.business.WorkPassRequest(
+                        "John Doe", java.time.LocalDate.of(2027, 6, 1)), headers),
+                com.chrainx.compliance_tracker.business.WorkPassResponse.class);
+
+        ResponseEntity<Void> deleteResponse = restTemplate.exchange(
+                "/api/auth/account", org.springframework.http.HttpMethod.DELETE, new HttpEntity<>(headers), Void.class);
+        assertEquals(HttpStatus.NO_CONTENT, deleteResponse.getStatusCode());
+
+        // The user row itself, and everything V13's cascades transitively remove, must actually
+        // be gone at the DB level - not just that the endpoint returned 204.
+        assertTrue(userRepository.findById(userId).isEmpty());
+
+        // The now-deleted user's own token is dead too - deleting the account must not leave a
+        // still-usable session behind.
+        ResponseEntity<String> afterDelete = restTemplate.exchange(
+                "/api/businesses", org.springframework.http.HttpMethod.GET, new HttpEntity<>(headers), String.class);
+        assertEquals(HttpStatus.UNAUTHORIZED, afterDelete.getStatusCode());
+    }
 }
