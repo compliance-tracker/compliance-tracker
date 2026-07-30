@@ -12,11 +12,12 @@ import org.springframework.stereotype.Component;
 // Real AuthEmailSender (issue #37, extended #36), same JavaMailSender/notifications.channel=email
 // opt-in as EmailNotificationSender.
 //
-// sendPasswordResetEmail sends a real clickable link now (frontend issue #55, the reset-password
-// UI, is done - it reads its token straight from the URL's ?token= query param, see
-// ResetPasswordPage.tsx). sendVerificationEmail still sends the raw token as plain text, not a
-// link - frontend issue #56 (the verify-email UI) is filed but not built yet, so a link would
-// point nowhere real. Update sendVerificationEmail the same way once #56 lands.
+// Both emails send a real clickable button/link now. sendVerificationEmail used to send the raw
+// token as plain text - the comment justifying that ("frontend issue #56 isn't built yet") went
+// stale the moment frontend #69 actually built the Verify Email page (reads its token from the
+// same ?token= query param VerifyEmailPage.tsx uses), the same class of staleness already found
+// and fixed once for sendPasswordResetEmail - worth checking any "not built yet" comment against
+// current frontend status before trusting it, not just at the time it was written.
 @Component
 @ConditionalOnProperty(prefix = "notifications", name = "channel", havingValue = "email")
 public class EmailAuthEmailSender implements AuthEmailSender {
@@ -36,35 +37,38 @@ public class EmailAuthEmailSender implements AuthEmailSender {
     @Override
     public void sendPasswordResetEmail(String toEmail, String resetToken) {
         String resetLink = frontendUrl + "/reset-password?token=" + resetToken;
-        sendPlainTextEmail(toEmail, "Reset your Compliance Tracker password", """
-                A password reset was requested for this account.
-
-                Reset your password: %s
-
-                If you didn't request this, you can safely ignore this email - your \
-                password won't change unless this link is actually used.
-                """.formatted(resetLink));
+        String html = EmailTemplate.render(
+                "Reset your password",
+                "A password reset was requested for this account. This link is valid for 1 hour "
+                        + "and can only be used once.",
+                "Reset password",
+                resetLink,
+                "If you didn't request this, you can safely ignore this email - your password "
+                        + "won't change unless the link above is actually used.");
+        sendHtmlEmail(toEmail, "Reset your Compliance Tracker password", html);
     }
 
     @Override
     public void sendVerificationEmail(String toEmail, String verificationToken) {
-        sendPlainTextEmail(toEmail, "Verify your Compliance Tracker email address", """
-                Thanks for registering. Use this token to verify you own this email address:
-
-                Verification token: %s
-
-                If you didn't create this account, you can safely ignore this email.
-                """.formatted(verificationToken));
+        String verifyLink = frontendUrl + "/verify-email?token=" + verificationToken;
+        String html = EmailTemplate.render(
+                "Verify your email address",
+                "Thanks for registering with Compliance Tracker. Confirm this is really your "
+                        + "email address, then log in to get started. This link is valid for 7 days.",
+                "Verify email address",
+                verifyLink,
+                "If you didn't create this account, you can safely ignore this email.");
+        sendHtmlEmail(toEmail, "Verify your Compliance Tracker email address", html);
     }
 
-    private void sendPlainTextEmail(String toEmail, String subject, String body) {
+    private void sendHtmlEmail(String toEmail, String subject, String html) {
         MimeMessage message = mailSender.createMimeMessage();
         try {
             MimeMessageHelper helper = new MimeMessageHelper(message);
             helper.setFrom(fromAddress);
             helper.setTo(toEmail);
             helper.setSubject(subject);
-            helper.setText(body);
+            helper.setText(html, true);
         } catch (MessagingException e) {
             // Same reasoning as EmailNotificationSender - every call above is a plain string
             // setter, this checked exception is essentially unreachable, but still needs

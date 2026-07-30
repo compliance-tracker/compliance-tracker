@@ -30,13 +30,16 @@ dev. To actually send real emails instead:
 Any SMTP provider works, not just Gmail — override `spring.mail.host`/`spring.mail.port` in
 `application.properties` (or as env vars) if using a different one.
 
-**The password reset email contains a real clickable link** (`{app.frontend-url}/reset-password?token=...`),
-not just the bare token — the frontend's `/reset-password` page (its own issue #55) reads the
-token straight from that URL's `?token=` query param. `app.frontend-url` defaults to
-`http://localhost:5173` (the Vite dev server) and needs updating to the real deployed frontend
-URL once one exists, same caveat as `app.cors.allowed-origin`. **The verification email still
-sends the raw token as plain text, not a link** — frontend issue #56 (the verify-email UI) isn't
-built yet, so a link would point nowhere real; update it the same way once #56 lands.
+**Both the password reset and verification emails contain a real, styled, clickable button** —
+`{app.frontend-url}/reset-password?token=...` and `{app.frontend-url}/verify-email?token=...`
+respectively, matching `ResetPasswordPage.tsx`/`VerifyEmailPage.tsx`'s own `?token=` query param
+convention exactly, with the same link repeated as plain text underneath for any client that
+strips the button's styling. `app.frontend-url` defaults to `http://localhost:5173` (the Vite dev
+server) and needs updating to the real deployed frontend URL once one exists, same caveat as
+`app.cors.allowed-origin`. Both emails share a small inline-styled HTML template
+(`EmailTemplate`) loosely echoing the frontend's own teal/brass palette — deliberately
+table-based, inline-CSS-only HTML (no `<style>` block, no external assets), since most email
+clients (Outlook especially) strip or ignore anything else.
 
 ## Previewing emails locally without a real account (Mailpit)
 
