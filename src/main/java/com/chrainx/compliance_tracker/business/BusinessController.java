@@ -18,6 +18,8 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 // @RestController: marks this class as an HTTP handler whose return values get serialized
 // straight to JSON, instead of being treated as a view template name.
@@ -31,23 +33,26 @@ public class BusinessController {
     private final CustomObligationRepository customObligationRepository;
     private final IdempotencyKeyRepository idempotencyKeyRepository;
     private final DeadlineRecordRepository deadlineRecordRepository;
+    private final DismissedDeadlineRepository dismissedDeadlineRepository;
     private final RuleEngine ruleEngine;
 
     // @Autowired: Spring sees this constructor needs a BusinessRepository, WorkPassRepository,
-    // CustomObligationRepository, IdempotencyKeyRepository, DeadlineRecordRepository, and
-    // RuleEngine, and since it already knows how to create all six (repositories are
-    // auto-implemented interfaces, RuleEngine is @Component), it builds them and passes them in
-    // automatically - we never call `new BusinessController(...)` ourselves.
+    // CustomObligationRepository, IdempotencyKeyRepository, DeadlineRecordRepository,
+    // DismissedDeadlineRepository, and RuleEngine, and since it already knows how to create all
+    // seven (repositories are auto-implemented interfaces, RuleEngine is @Component), it builds
+    // them and passes them in automatically - we never call `new BusinessController(...)` ourselves.
     @Autowired
     public BusinessController(BusinessRepository businessRepository, WorkPassRepository workPassRepository,
                                CustomObligationRepository customObligationRepository,
                                IdempotencyKeyRepository idempotencyKeyRepository,
-                               DeadlineRecordRepository deadlineRecordRepository, RuleEngine ruleEngine) {
+                               DeadlineRecordRepository deadlineRecordRepository,
+                               DismissedDeadlineRepository dismissedDeadlineRepository, RuleEngine ruleEngine) {
         this.businessRepository = businessRepository;
         this.workPassRepository = workPassRepository;
         this.customObligationRepository = customObligationRepository;
         this.idempotencyKeyRepository = idempotencyKeyRepository;
         this.deadlineRecordRepository = deadlineRecordRepository;
+        this.dismissedDeadlineRepository = dismissedDeadlineRepository;
         this.ruleEngine = ruleEngine;
     }
 
@@ -164,7 +169,18 @@ public class BusinessController {
         List<CustomObligation> customObligations = customObligationRepository.findByBusinessId(id);
         List<Deadline> deadlines = ruleEngine.computeDeadlines(
                 business.get(), workPasses, customObligations, LocalDate.now(RuleEngine.SINGAPORE_TIME_ZONE));
-        return ResponseEntity.ok(deadlines);
+
+        // Issue #34: a deadline the user has manually dismissed is filtered out of the live view
+        // here, not inside RuleEngine itself - RuleEngine stays a pure computation with no notion
+        // of state (see DismissedDeadlineKey's own comment).
+        Set<DismissedDeadlineKey> dismissed = dismissedDeadlineRepository.findByBusinessId(id).stream()
+                .map(DismissedDeadlineKey::of)
+                .collect(Collectors.toSet());
+        List<Deadline> visible = deadlines.stream()
+                .filter(d -> !dismissed.contains(DismissedDeadlineKey.of(id, d)))
+                .toList();
+
+        return ResponseEntity.ok(visible);
     }
 
     // Applies a BusinessRequest's fields onto the already-owned, already-persisted entity

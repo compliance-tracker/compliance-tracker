@@ -10,6 +10,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 // @Service: same idea as @Component (Spring creates and manages one instance, injectable
 // elsewhere) - the different annotation name is purely a convention marking "this holds
@@ -21,6 +23,7 @@ public class DeadlineSyncService {
     private final WorkPassRepository workPassRepository;
     private final CustomObligationRepository customObligationRepository;
     private final DeadlineRecordRepository deadlineRecordRepository;
+    private final DismissedDeadlineRepository dismissedDeadlineRepository;
     private final RuleEngine ruleEngine;
 
     @Autowired
@@ -28,11 +31,13 @@ public class DeadlineSyncService {
                                 WorkPassRepository workPassRepository,
                                 CustomObligationRepository customObligationRepository,
                                 DeadlineRecordRepository deadlineRecordRepository,
+                                DismissedDeadlineRepository dismissedDeadlineRepository,
                                 RuleEngine ruleEngine) {
         this.businessRepository = businessRepository;
         this.workPassRepository = workPassRepository;
         this.customObligationRepository = customObligationRepository;
         this.deadlineRecordRepository = deadlineRecordRepository;
+        this.dismissedDeadlineRepository = dismissedDeadlineRepository;
         this.ruleEngine = ruleEngine;
     }
 
@@ -110,8 +115,17 @@ public class DeadlineSyncService {
     // this method never writes anything.
     @Transactional(readOnly = true)
     public List<DeadlineRecord> findDueSoonAndUnreminded(LocalDate referenceDate) {
+        // Issue #34: a deadline the user has manually marked as handled shouldn't still trigger
+        // an automated reminder - that's the whole point of dismissing it. Filtered here (the
+        // actual dispatch gate), not by suppressing DeadlineRecord creation itself in
+        // doSyncDeadlines - the record still exists as bookkeeping, it just never gets dispatched.
+        Set<DismissedDeadlineKey> dismissed = dismissedDeadlineRepository.findAll().stream()
+                .map(DismissedDeadlineKey::of)
+                .collect(Collectors.toSet());
+
         return deadlineRecordRepository.findByReminderSentFalse().stream()
                 .filter(record -> !record.getDueDate().isAfter(referenceDate.plusDays(record.getBusiness().getLeadTimeDays())))
+                .filter(record -> !dismissed.contains(DismissedDeadlineKey.of(record.getBusiness().getId(), record)))
                 .toList();
     }
 }

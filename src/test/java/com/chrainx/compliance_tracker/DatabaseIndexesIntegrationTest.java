@@ -55,4 +55,14 @@ class DatabaseIndexesIntegrationTest {
     void emailVerificationTokenUserIdIndex_exists() {
         assertTrue(indexExists("idx_email_verification_token_user_id"));
     }
+
+    @Test
+    void dismissedDeadlineBusinessIdIndex_exists() {
+        assertTrue(indexExists("idx_dismissed_deadline_business_id"));
+    }
+
+    @Test
+    void dismissedDeadlineCustomObligationIdIndex_exists() {
+        assertTrue(indexExists("idx_dismissed_deadline_custom_obligation_id"));
+    }
 }
