@@ -44,11 +44,16 @@ public class RuleEngine {
                 nextAcraDeadline(business.getFinancialYearEnd(), referenceDate)
         ));
 
-        // GST F5 rule only applies if the business is actually GST-registered.
+        // GST F5 rule only applies if the business is actually GST-registered. Due date is
+        // always exactly one month after the end of the accounting period, regardless of
+        // frequency (issue #45) - only which period's end date to use differs.
         if (business.isGstRegistered()) {
+            LocalDate accountingPeriodEnd = business.getGstFilingFrequency() == GstFilingFrequency.MONTHLY
+                    ? monthEnd(referenceDate)
+                    : calendarQuarterEnd(referenceDate);
             deadlines.add(new Deadline(
                     ObligationType.GST_F5,
-                    calendarQuarterEnd(referenceDate).plusMonths(1)
+                    accountingPeriodEnd.plusMonths(1)
             ));
         }
 
@@ -128,5 +133,12 @@ public class RuleEngine {
     private LocalDate calendarQuarterEnd(LocalDate referenceDate) {
         int quarterEndMonth = ((referenceDate.getMonthValue() - 1) / 3) * 3 + 3;
         return YearMonth.of(referenceDate.getYear(), quarterEndMonth).atEndOfMonth();
+    }
+
+    // Issue #45's monthly-filer counterpart to calendarQuarterEnd above - the end date of
+    // referenceDate's own calendar month, the accounting period a monthly GST filer's return
+    // covers.
+    private LocalDate monthEnd(LocalDate referenceDate) {
+        return YearMonth.from(referenceDate).atEndOfMonth();
     }
 }

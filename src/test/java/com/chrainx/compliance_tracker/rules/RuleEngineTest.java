@@ -114,6 +114,37 @@ class RuleEngineTest {
     }
 
     @Test
+    void gstRegisteredBusiness_defaultsToQuarterlyFiling_whenNeverSetExplicitly() {
+        // A freshly-constructed Business (no explicit setGstFilingFrequency call) must behave
+        // exactly like every business that existed before issue #45 added this field at all.
+        Business business = new Business();
+        business.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
+        business.setGstRegistered(true);
+
+        assertEquals(GstFilingFrequency.QUARTERLY, business.getGstFilingFrequency());
+    }
+
+    @Test
+    void monthlyGstFiler_getsGstDeadline_oneMonthAfterCalendarMonthEnd() {
+        // Issue #45 - IRAS's actual rule: a return/payment is due exactly one month after the
+        // end of the accounting period, whatever that period's own length is.
+        Business business = new Business();
+        business.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
+        business.setGstRegistered(true);
+        business.setGstFilingFrequency(GstFilingFrequency.MONTHLY);
+
+        // Reference date is in February -> month end 2026-02-28 -> deadline 2026-03-28
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, Collections.emptyList(), Collections.emptyList(), LocalDate.of(2026, 2, 15));
+
+        Deadline gst = deadlines.stream()
+                .filter(d -> d.getObligationType() == ObligationType.GST_F5)
+                .findFirst()
+                .orElseThrow();
+
+        assertEquals(LocalDate.of(2026, 3, 28), gst.getDueDate());
+    }
+
+    @Test
     void nonGstRegisteredBusiness_hasNoGstDeadline() {
         Business business = new Business();
         business.setFinancialYearEnd(LocalDate.of(2026, 12, 31));

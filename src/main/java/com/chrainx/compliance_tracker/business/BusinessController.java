@@ -3,6 +3,7 @@ import com.chrainx.compliance_tracker.auth.User;
 
 import com.chrainx.compliance_tracker.error.ApiError;
 import com.chrainx.compliance_tracker.rules.Deadline;
+import com.chrainx.compliance_tracker.rules.GstFilingFrequency;
 import com.chrainx.compliance_tracker.rules.ObligationType;
 import com.chrainx.compliance_tracker.rules.RuleEngine;
 import jakarta.validation.Valid;
@@ -97,6 +98,10 @@ public class BusinessController {
         // Java-side default.
         business.setLeadTimeDays(request.leadTimeDays() != null ? request.leadTimeDays() : 14);
         business.setIncorporationDate(request.incorporationDate());
+        // Same optional-with-a-default idiom as leadTimeDays above (issue #45) - QUARTERLY is
+        // the pre-existing behavior every business had before this field existed.
+        business.setGstFilingFrequency(
+                request.gstFilingFrequency() != null ? request.gstFilingFrequency() : GstFilingFrequency.QUARTERLY);
         business.setOwner(currentUser);
         business = businessRepository.save(business);
 
@@ -248,6 +253,13 @@ public class BusinessController {
         // deadline still sitting in the queue right alongside the newly-synced correct one, and
         // could get reminded off the wrong due date.
         boolean financialYearEndChanged = !Objects.equals(business.getFinancialYearEnd(), request.financialYearEnd());
+        // Issue #45 - a changed filing frequency changes what the *next* GST F5 accounting
+        // period end (and so due date) actually is, the same #30-style staleness FYE changes
+        // already needed handling for. Only meaningful to compare when a value is actually
+        // supplied - an omitted gstFilingFrequency preserves the existing one below, and that
+        // path is never a "change" at all.
+        boolean gstFilingFrequencyChanged = request.gstFilingFrequency() != null
+                && !Objects.equals(business.getGstFilingFrequency(), request.gstFilingFrequency());
 
         business.setName(request.name());
         business.setFinancialYearEnd(request.financialYearEnd());
@@ -263,12 +275,20 @@ public class BusinessController {
         if (request.incorporationDate() != null) {
             business.setIncorporationDate(request.incorporationDate());
         }
+        // Same preserve-if-omitted pattern again (issue #45).
+        if (request.gstFilingFrequency() != null) {
+            business.setGstFilingFrequency(request.gstFilingFrequency());
+        }
 
         Business saved = businessRepository.save(business);
 
         if (financialYearEndChanged) {
             deadlineRecordRepository.deleteByBusinessIdAndObligationTypeAndReminderSentFalse(
                     saved.getId(), ObligationType.ACRA_ANNUAL_RETURN);
+        }
+        if (gstFilingFrequencyChanged) {
+            deadlineRecordRepository.deleteByBusinessIdAndObligationTypeAndReminderSentFalse(
+                    saved.getId(), ObligationType.GST_F5);
         }
 
         return ResponseEntity.ok(BusinessResponse.from(saved));

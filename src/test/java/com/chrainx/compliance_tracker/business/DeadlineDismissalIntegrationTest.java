@@ -76,7 +76,7 @@ class DeadlineDismissalIntegrationTest {
     }
 
     private Long createBusiness(HttpHeaders headers) {
-        BusinessRequest request = new BusinessRequest("Deadline Dismissal E2E Test Co", LocalDate.of(2026, 12, 31), true, null, null);
+        BusinessRequest request = new BusinessRequest("Deadline Dismissal E2E Test Co", LocalDate.of(2026, 12, 31), true, null, null, null);
 
         return restTemplate.postForEntity("/api/businesses", new HttpEntity<>(request, headers), BusinessResponse.class)
                 .getBody().id();
@@ -179,7 +179,7 @@ class DeadlineDismissalIntegrationTest {
         // "still there" signal here) proves dismissing GST doesn't silently suppress the whole
         // business's queue.
         HttpHeaders headers = authHeaders(registerAndGetToken());
-        BusinessRequest businessRequest = new BusinessRequest("Dismiss Dispatch E2E Test Co", LocalDate.of(2026, 12, 31), true, 90, null);
+        BusinessRequest businessRequest = new BusinessRequest("Dismiss Dispatch E2E Test Co", LocalDate.of(2026, 12, 31), true, 90, null, null);
         Long businessId = restTemplate.postForEntity("/api/businesses", new HttpEntity<>(businessRequest, headers), BusinessResponse.class)
                 .getBody().id();
         restTemplate.postForEntity(
