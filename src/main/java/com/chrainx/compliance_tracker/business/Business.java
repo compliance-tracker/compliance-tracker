@@ -1,5 +1,6 @@
 package com.chrainx.compliance_tracker.business;
 import com.chrainx.compliance_tracker.auth.User;
+import com.chrainx.compliance_tracker.rules.GstFilingFrequency;
 import com.chrainx.compliance_tracker.security.EncryptedStringConverter;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
@@ -26,6 +27,15 @@ public class Business {
     private LocalDate financialYearEnd;
 
     private boolean gstRegistered;
+
+    // Issue #45 - IRAS actually supports monthly/quarterly/six-monthly GST accounting periods,
+    // not just the quarterly default this app originally assumed unconditionally. Only means
+    // anything when gstRegistered is true (same as the GST_F5 rule itself); defaults to
+    // QUARTERLY for both a freshly-constructed entity in Java and, via the V15 migration's
+    // column default, every row that existed before this field did - preserves every existing
+    // business's real behavior exactly, nothing silently changes for anyone not using this.
+    @Enumerated(EnumType.STRING)
+    private GstFilingFrequency gstFilingFrequency = GstFilingFrequency.QUARTERLY;
 
     // How many days before a deadline SqsDispatchService should send a reminder for it (issue
     // #53) - used to be a single hardcoded 14 for every business. Defaults to 14 (matching the
@@ -60,6 +70,9 @@ public class Business {
 
     public boolean isGstRegistered() { return gstRegistered; }
     public void setGstRegistered(boolean gstRegistered) { this.gstRegistered = gstRegistered; }
+
+    public GstFilingFrequency getGstFilingFrequency() { return gstFilingFrequency; }
+    public void setGstFilingFrequency(GstFilingFrequency gstFilingFrequency) { this.gstFilingFrequency = gstFilingFrequency; }
 
     public int getLeadTimeDays() { return leadTimeDays; }
     public void setLeadTimeDays(int leadTimeDays) { this.leadTimeDays = leadTimeDays; }

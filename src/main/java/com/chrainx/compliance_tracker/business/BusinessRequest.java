@@ -1,5 +1,6 @@
 package com.chrainx.compliance_tracker.business;
 
+import com.chrainx.compliance_tracker.rules.GstFilingFrequency;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -27,11 +28,16 @@ import java.time.LocalDate;
 // a cross-field check, which Bean Validation annotations on a single field can't express -
 // BusinessController checks it explicitly instead, same pattern as the password-strength check
 // on AuthController.register.
+// gstFilingFrequency (issue #45) is optional, same reasoning as leadTimeDays/incorporationDate -
+// BusinessController defaults it to QUARTERLY (the pre-existing behavior) on create when omitted,
+// and preserves the existing value on update when omitted, rather than forcing every client to
+// always supply it.
 public record BusinessRequest(
         @NotBlank String name,
         @NotNull LocalDate financialYearEnd,
         boolean gstRegistered,
         @Min(1) @Max(90) Integer leadTimeDays,
-        LocalDate incorporationDate
+        LocalDate incorporationDate,
+        GstFilingFrequency gstFilingFrequency
 ) {
 }

@@ -126,7 +126,7 @@ class AuthIntegrationTest {
 
         com.chrainx.compliance_tracker.business.BusinessRequest newBusiness =
                 new com.chrainx.compliance_tracker.business.BusinessRequest(
-                        "E2E Auth Test Co", java.time.LocalDate.of(2026, 12, 31), false, null, null);
+                        "E2E Auth Test Co", java.time.LocalDate.of(2026, 12, 31), false, null, null, null);
 
         ResponseEntity<com.chrainx.compliance_tracker.business.BusinessResponse> createResponse = restTemplate.postForEntity(
                 "/api/businesses", new HttpEntity<>(newBusiness, headers),
@@ -169,7 +169,7 @@ class AuthIntegrationTest {
 
         com.chrainx.compliance_tracker.business.BusinessRequest businessA =
                 new com.chrainx.compliance_tracker.business.BusinessRequest(
-                        "User A's Real Business", java.time.LocalDate.of(2026, 12, 31), false, null, null);
+                        "User A's Real Business", java.time.LocalDate.of(2026, 12, 31), false, null, null, null);
 
         ResponseEntity<com.chrainx.compliance_tracker.business.BusinessResponse> createAResponse = restTemplate.postForEntity(
                 "/api/businesses", new HttpEntity<>(businessA, headersA),
@@ -829,7 +829,7 @@ class AuthIntegrationTest {
 
         com.chrainx.compliance_tracker.business.BusinessRequest businessRequest =
                 new com.chrainx.compliance_tracker.business.BusinessRequest(
-                        "Export Flow Co", java.time.LocalDate.of(2026, 12, 31), false, null, null);
+                        "Export Flow Co", java.time.LocalDate.of(2026, 12, 31), false, null, null, null);
         ResponseEntity<com.chrainx.compliance_tracker.business.BusinessResponse> createResponse = restTemplate.postForEntity(
                 "/api/businesses", new HttpEntity<>(businessRequest, headersA),
                 com.chrainx.compliance_tracker.business.BusinessResponse.class);
@@ -875,7 +875,7 @@ class AuthIntegrationTest {
 
         com.chrainx.compliance_tracker.business.BusinessRequest businessRequest =
                 new com.chrainx.compliance_tracker.business.BusinessRequest(
-                        "Delete Flow Co", java.time.LocalDate.of(2026, 12, 31), false, null, null);
+                        "Delete Flow Co", java.time.LocalDate.of(2026, 12, 31), false, null, null, null);
         ResponseEntity<com.chrainx.compliance_tracker.business.BusinessResponse> createResponse = restTemplate.postForEntity(
                 "/api/businesses", new HttpEntity<>(businessRequest, headers),
                 com.chrainx.compliance_tracker.business.BusinessResponse.class);

@@ -232,7 +232,7 @@ class BusinessControllerTest {
 
     @Test
     void createBusiness_setsOwnerToCurrentUser() {
-        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, null, null);
+        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, null, null, null);
         when(businessRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         ResponseEntity<?> response = controller.createBusiness(request, null, currentUser);
@@ -245,7 +245,7 @@ class BusinessControllerTest {
         // The header is entirely opt-in (issue #61) - an existing caller that never sends it
         // must see zero behavior change, not just "the same result" but literally no extra
         // queries against a table it doesn't know exists.
-        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, null, null);
+        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, null, null, null);
         when(businessRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         controller.createBusiness(request, null, currentUser);
@@ -255,7 +255,7 @@ class BusinessControllerTest {
 
     @Test
     void createBusiness_withNewIdempotencyKey_createsABusiness_andRecordsTheKey() {
-        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, null, null);
+        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, null, null, null);
         Business saved = new Business();
         saved.setId(5L);
         saved.setName("Test Co");
@@ -282,7 +282,7 @@ class BusinessControllerTest {
         when(idempotencyKeyRepository.findByKeyAndOwnerId("key-123", 1L)).thenReturn(Optional.of(existingKey));
         when(businessRepository.findById(5L)).thenReturn(Optional.of(original));
 
-        BusinessRequest retriedRequest = new BusinessRequest("Original Co", LocalDate.of(2026, 12, 31), false, null, null);
+        BusinessRequest retriedRequest = new BusinessRequest("Original Co", LocalDate.of(2026, 12, 31), false, null, null, null);
         ResponseEntity<?> response = controller.createBusiness(retriedRequest, "key-123", currentUser);
 
         assertEquals(5L, businessBody(response).id());
@@ -296,7 +296,7 @@ class BusinessControllerTest {
 
     @Test
     void createBusiness_defaultsLeadTimeDaysTo14_whenOmittedFromTheRequest() {
-        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, null, null);
+        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, null, null, null);
         when(businessRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         ResponseEntity<?> response = controller.createBusiness(request, null, currentUser);
@@ -306,7 +306,7 @@ class BusinessControllerTest {
 
     @Test
     void createBusiness_usesTheGivenLeadTimeDays_whenPresent() {
-        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, 30, null);
+        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, 30, null, null);
         when(businessRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         ResponseEntity<?> response = controller.createBusiness(request, null, currentUser);
@@ -315,12 +315,35 @@ class BusinessControllerTest {
     }
 
     @Test
+    void createBusiness_defaultsGstFilingFrequencyToQuarterly_whenOmittedFromTheRequest() {
+        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), true, null, null, null);
+        when(businessRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        ResponseEntity<?> response = controller.createBusiness(request, null, currentUser);
+
+        assertEquals(com.chrainx.compliance_tracker.rules.GstFilingFrequency.QUARTERLY,
+                businessBody(response).gstFilingFrequency());
+    }
+
+    @Test
+    void createBusiness_usesTheGivenGstFilingFrequency_whenPresent() {
+        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), true, null, null,
+                com.chrainx.compliance_tracker.rules.GstFilingFrequency.MONTHLY);
+        when(businessRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        ResponseEntity<?> response = controller.createBusiness(request, null, currentUser);
+
+        assertEquals(com.chrainx.compliance_tracker.rules.GstFilingFrequency.MONTHLY,
+                businessBody(response).gstFilingFrequency());
+    }
+
+    @Test
     void updateBusiness_leavesLeadTimeDaysUnchanged_whenOmittedFromTheRequest() {
         Business existing = new Business();
         existing.setId(1L);
         existing.setLeadTimeDays(30);
 
-        BusinessRequest request = new BusinessRequest("New Name", LocalDate.of(2027, 6, 30), true, null, null);
+        BusinessRequest request = new BusinessRequest("New Name", LocalDate.of(2027, 6, 30), true, null, null, null);
 
         when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(existing));
         when(businessRepository.save(existing)).thenReturn(existing);
@@ -336,7 +359,7 @@ class BusinessControllerTest {
         existing.setId(1L);
         existing.setLeadTimeDays(14);
 
-        BusinessRequest request = new BusinessRequest("New Name", LocalDate.of(2027, 6, 30), true, 7, null);
+        BusinessRequest request = new BusinessRequest("New Name", LocalDate.of(2027, 6, 30), true, 7, null, null);
 
         when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(existing));
         when(businessRepository.save(existing)).thenReturn(existing);
@@ -352,7 +375,7 @@ class BusinessControllerTest {
 
     @Test
     void createBusiness_withNoIncorporationDate_skipsTheEighteenMonthCheck() {
-        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, null, null);
+        BusinessRequest request = new BusinessRequest("Test Co", LocalDate.of(2026, 12, 31), false, null, null, null);
         when(businessRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         ResponseEntity<?> response = controller.createBusiness(request, null, currentUser);
@@ -363,7 +386,7 @@ class BusinessControllerTest {
     @Test
     void createBusiness_withFirstFyeWithinEighteenMonths_succeeds() {
         BusinessRequest request = new BusinessRequest(
-                "Test Co", LocalDate.of(2026, 12, 31), false, null, LocalDate.of(2026, 1, 15));
+                "Test Co", LocalDate.of(2026, 12, 31), false, null, LocalDate.of(2026, 1, 15), null);
         when(businessRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         ResponseEntity<?> response = controller.createBusiness(request, null, currentUser);
@@ -375,7 +398,7 @@ class BusinessControllerTest {
     @Test
     void createBusiness_withFirstFyeBeyondEighteenMonths_isRejectedWith400() {
         BusinessRequest request = new BusinessRequest(
-                "Test Co", LocalDate.of(2027, 12, 31), false, null, LocalDate.of(2026, 1, 15));
+                "Test Co", LocalDate.of(2027, 12, 31), false, null, LocalDate.of(2026, 1, 15), null);
 
         ResponseEntity<?> response = controller.createBusiness(request, null, currentUser);
 
@@ -389,7 +412,7 @@ class BusinessControllerTest {
         existing.setId(1L);
         existing.setIncorporationDate(LocalDate.of(2020, 1, 1));
 
-        BusinessRequest request = new BusinessRequest("New Name", LocalDate.of(2027, 6, 30), true, null, null);
+        BusinessRequest request = new BusinessRequest("New Name", LocalDate.of(2027, 6, 30), true, null, null, null);
 
         when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(existing));
         when(businessRepository.save(existing)).thenReturn(existing);
@@ -409,7 +432,7 @@ class BusinessControllerTest {
         existing.setId(1L);
         existing.setIncorporationDate(LocalDate.of(2018, 1, 1));
 
-        BusinessRequest request = new BusinessRequest("Old Co", LocalDate.of(2026, 12, 31), false, null, null);
+        BusinessRequest request = new BusinessRequest("Old Co", LocalDate.of(2026, 12, 31), false, null, null, null);
 
         when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(existing));
         when(businessRepository.save(existing)).thenReturn(existing);
@@ -429,7 +452,7 @@ class BusinessControllerTest {
         existing.setId(1L);
         existing.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
 
-        BusinessRequest request = new BusinessRequest("Same Co", LocalDate.of(2027, 3, 31), false, null, null);
+        BusinessRequest request = new BusinessRequest("Same Co", LocalDate.of(2027, 3, 31), false, null, null, null);
 
         when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(existing));
         when(businessRepository.save(existing)).thenReturn(existing);
@@ -447,13 +470,55 @@ class BusinessControllerTest {
         existing.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
 
         // Same financialYearEnd as already stored - only name/gstRegistered actually change.
-        BusinessRequest request = new BusinessRequest("Renamed Co", LocalDate.of(2026, 12, 31), true, null, null);
+        BusinessRequest request = new BusinessRequest("Renamed Co", LocalDate.of(2026, 12, 31), true, null, null, null);
 
         when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(existing));
         when(businessRepository.save(existing)).thenReturn(existing);
 
         controller.updateBusiness(1L, request, currentUser);
 
+        verifyNoInteractions(deadlineRecordRepository);
+    }
+
+    // Same #30-style staleness reasoning, for issue #45's gstFilingFrequency instead of
+    // financialYearEnd - a changed frequency changes what the next GST F5 accounting period end
+    // (and so due date) actually is.
+
+    @Test
+    void updateBusiness_whenGstFilingFrequencyChanges_deletesStaleUnremindedGstRecords() {
+        Business existing = new Business();
+        existing.setId(1L);
+        existing.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
+        existing.setGstFilingFrequency(com.chrainx.compliance_tracker.rules.GstFilingFrequency.QUARTERLY);
+
+        BusinessRequest request = new BusinessRequest("Same Co", LocalDate.of(2026, 12, 31), true, null, null,
+                com.chrainx.compliance_tracker.rules.GstFilingFrequency.MONTHLY);
+
+        when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(existing));
+        when(businessRepository.save(existing)).thenReturn(existing);
+
+        controller.updateBusiness(1L, request, currentUser);
+
+        verify(deadlineRecordRepository).deleteByBusinessIdAndObligationTypeAndReminderSentFalse(
+                1L, ObligationType.GST_F5);
+    }
+
+    @Test
+    void updateBusiness_whenGstFilingFrequencyIsOmitted_preservesExistingValue_andDoesNotTouchDeadlineRecords() {
+        Business existing = new Business();
+        existing.setId(1L);
+        existing.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
+        existing.setGstFilingFrequency(com.chrainx.compliance_tracker.rules.GstFilingFrequency.MONTHLY);
+
+        // gstFilingFrequency omitted (null) - same preserve-if-omitted idiom as leadTimeDays.
+        BusinessRequest request = new BusinessRequest("Same Co", LocalDate.of(2026, 12, 31), true, null, null, null);
+
+        when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(existing));
+        when(businessRepository.save(existing)).thenReturn(existing);
+
+        controller.updateBusiness(1L, request, currentUser);
+
+        assertEquals(com.chrainx.compliance_tracker.rules.GstFilingFrequency.MONTHLY, existing.getGstFilingFrequency());
         verifyNoInteractions(deadlineRecordRepository);
     }
 
@@ -477,7 +542,7 @@ class BusinessControllerTest {
         existing.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
         existing.setGstRegistered(false);
 
-        BusinessRequest request = new BusinessRequest("New Name", LocalDate.of(2027, 6, 30), true, null, null);
+        BusinessRequest request = new BusinessRequest("New Name", LocalDate.of(2027, 6, 30), true, null, null, null);
 
         when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(existing));
         when(businessRepository.save(existing)).thenReturn(existing);
@@ -495,7 +560,7 @@ class BusinessControllerTest {
         when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.empty());
 
         ResponseEntity<?> response = controller.updateBusiness(
-                1L, new BusinessRequest("Name", LocalDate.of(2026, 12, 31), false, null, null), currentUser);
+                1L, new BusinessRequest("Name", LocalDate.of(2026, 12, 31), false, null, null, null), currentUser);
 
         assertEquals(404, response.getStatusCode().value());
     }

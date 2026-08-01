@@ -1,5 +1,7 @@
 package com.chrainx.compliance_tracker.business;
 
+import com.chrainx.compliance_tracker.rules.GstFilingFrequency;
+
 import java.time.LocalDate;
 
 // What the API actually returns for a Business - separate from the JPA entity (issue #46), so
@@ -9,10 +11,11 @@ import java.time.LocalDate;
 // serialized a whole User - including their password hash - straight into every response.
 public record BusinessResponse(
         Long id, String name, LocalDate financialYearEnd, boolean gstRegistered, int leadTimeDays,
-        LocalDate incorporationDate) {
+        LocalDate incorporationDate, GstFilingFrequency gstFilingFrequency) {
 
     public static BusinessResponse from(Business business) {
         return new BusinessResponse(business.getId(), business.getName(), business.getFinancialYearEnd(),
-                business.isGstRegistered(), business.getLeadTimeDays(), business.getIncorporationDate());
+                business.isGstRegistered(), business.getLeadTimeDays(), business.getIncorporationDate(),
+                business.getGstFilingFrequency());
     }
 }
