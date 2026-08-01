@@ -38,7 +38,7 @@ a single directory before this split (issue #90):
 | Package | Contents |
 |---|---|
 | `auth` | `AuthController`/`AuthRequest`/`AuthResponse`, `JwtService`, `JwtAuthenticationFilter`, `LoginRateLimiter`, `TokenBlocklist`, `User`, `UserRepository`, `PasswordResetToken`/`PasswordResetTokenRepository`, `ForgotPasswordRequest`/`ResetPasswordRequest`, `EmailVerificationToken`/`EmailVerificationTokenRepository`, `VerifyEmailRequest` |
-| `business` | `Business`/`BusinessRequest`/`BusinessResponse`/`BusinessController`/`BusinessRepository`, `WorkPass`/`WorkPassRequest`/`WorkPassResponse`/`WorkPassController`/`WorkPassRepository`, `CustomObligation`/`CustomObligationRequest`/`CustomObligationResponse`/`CustomObligationController`/`CustomObligationRepository` (issue #59), `DeadlineRecord`/`DeadlineRecordRepository`, `DeadlineSyncService`, `IdempotencyKey`/`IdempotencyKeyRepository`, `PageResponse` (pagination, issue #49) |
+| `business` | `Business`/`BusinessRequest`/`BusinessResponse`/`BusinessController`/`BusinessRepository`, `WorkPass`/`WorkPassRequest`/`WorkPassResponse`/`WorkPassController`/`WorkPassRepository`, `CustomObligation`/`CustomObligationRequest`/`CustomObligationResponse`/`CustomObligationController`/`CustomObligationRepository` (issue #59), `DeadlineRecord`/`DeadlineRecordRepository`, `DismissedDeadline`/`DismissedDeadlineKey`/`DismissedDeadlineRepository`/`DismissDeadlineRequest`/`DismissedDeadlineResponse`/`DeadlineDismissalController` (issue #34), `DeadlineSyncService`, `IdempotencyKey`/`IdempotencyKeyRepository`, `PageResponse` (pagination, issue #49) |
 | `config` | `SecurityConfig`, `CorsConfig`, `SchedulingConfig`, `SqsConfig`, `OpenApiConfig` (issue #21), `LoggingConfig` (issue #51) — cross-cutting `@Configuration` classes, not owned by any one feature |
 | `error` | `ApiError`, `GlobalExceptionHandler` — the consistent structured error response format (issue #47), also cross-cutting |
 | `logging` | `CorrelationIdFilter`, `CorrelationIdSupport` (issue #51) — request/scheduled-run correlation IDs, see "Request correlation IDs" below |
@@ -245,6 +245,25 @@ wraps around the delegation to its private impl, not the other way around.
   to remove one that's become wrong because the value it was computed from changed underneath
   it, so without this cleanup an edited business/obligation would end up with the stale record
   still sitting in the reminder queue right alongside the newly-synced correct one.
+- **`DismissedDeadline`/`DismissedDeadlineRepository`/`DeadlineDismissalController`** (issue #34)
+  — lets a user manually mark a deadline as handled, for the edge cases `RuleEngine` can't compute
+  correctly on its own (a mid-cycle FYE change, a first-year exception). Deliberately **not** a
+  flag on `DeadlineRecord` — `GET /businesses/{id}/deadlines` is entirely live-computed by
+  `RuleEngine` with no persisted row or id of its own to attach a flag to, and a `DeadlineRecord`
+  for what's currently on screen may not even exist yet, since `DeadlineSyncService` only creates
+  one once a day. Matched by natural key instead (`business_id, obligation_type, due_date,
+  custom_obligation_id`), the same shape `DeadlineRecord`'s own dedupe check already uses,
+  independent of whether a `DeadlineRecord` row exists. `DismissedDeadlineKey` is a small `record`
+  value object (free `equals`/`hashCode`) used to check both a live-computed `rules.Deadline`
+  (`BusinessController.getDeadlines`) and a persisted `DeadlineRecord`
+  (`DeadlineSyncService.findDueSoonAndUnreminded`) against the same dismissed set, so a dismissal
+  hides the deadline from the live view *and* stops the automated reminder pipeline from acting on
+  it — filtered in both places, not baked into `RuleEngine` itself, which stays a pure computation
+  with no notion of state. `DeadlineDismissalController` exposes `POST .../deadlines/dismiss`
+  (idempotent — dismissing an already-dismissed deadline returns the existing row), `GET
+  .../deadlines/dismissed` (so the frontend can offer an undo), and `DELETE
+  .../deadlines/dismiss/{id}` (un-dismiss). No DB-level uniqueness constraint on the natural key,
+  same as `DeadlineRecord` itself — a duplicate row under a genuine race is a harmless no-op.
 - **`DeadlineSyncService`** — `@Service` with a `@Scheduled` method (`syncDeadlines`, daily at
   01:00 Singapore time — `zone = "Asia/Singapore"` explicitly, issue #28, not the server's own
   default timezone) that recomputes every business's deadlines (built-in *and* custom, issue #59)
@@ -252,7 +271,8 @@ wraps around the delegation to its private impl, not the other way around.
   already exist so `reminderSent` isn't reset. Also exposes `findDueSoonAndUnreminded(referenceDate)`, which the dispatch step
   (`SqsDispatchService`) calls next to decide what actually gets pushed to the reminder queue —
   "due soon" is evaluated per-record against that record's own `business.leadTimeDays` (issue
-  #53), not a single global window, so it's `@Transactional(readOnly = true)`: `Business` is a
+  #53), not a single global window, and now also excludes anything matching a `DismissedDeadline`
+  (issue #34), so it's `@Transactional(readOnly = true)`: `Business` is a
   lazy relationship on `DeadlineRecord`, and reading `leadTimeDays` off it during the filtering
   needs the Hibernate session kept open past the initial repository call.
 - **`SqsConfig`** — `@Configuration` producing a single `SqsClient` `@Bean`. When

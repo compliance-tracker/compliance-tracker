@@ -38,10 +38,11 @@ class BusinessControllerTest {
     private final CustomObligationRepository customObligationRepository = mock(CustomObligationRepository.class);
     private final IdempotencyKeyRepository idempotencyKeyRepository = mock(IdempotencyKeyRepository.class);
     private final DeadlineRecordRepository deadlineRecordRepository = mock(DeadlineRecordRepository.class);
+    private final DismissedDeadlineRepository dismissedDeadlineRepository = mock(DismissedDeadlineRepository.class);
     private final RuleEngine ruleEngine = new RuleEngine();
     private final BusinessController controller = new BusinessController(
             businessRepository, workPassRepository, customObligationRepository, idempotencyKeyRepository,
-            deadlineRecordRepository, ruleEngine);
+            deadlineRecordRepository, dismissedDeadlineRepository, ruleEngine);
 
     private final User currentUser = new User();
 
@@ -119,6 +120,36 @@ class BusinessControllerTest {
         assertTrue(deadlinesBody(response).stream()
                 .anyMatch(d -> d.getObligationType() == ObligationType.WORK_PASS_RENEWAL
                         && d.getDueDate().equals(LocalDate.of(2026, 11, 1))));
+    }
+
+    @Test
+    void getDeadlines_excludesADeadline_thatWasManuallyDismissed() {
+        // Issue #34: a live-computed deadline matching a DismissedDeadline row (by its natural
+        // key) must not show up in the main deadlines view at all.
+        Business business = new Business();
+        business.setId(1L);
+        business.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
+        business.setGstRegistered(false);
+
+        when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(business));
+        when(workPassRepository.findByBusinessId(1L)).thenReturn(Collections.emptyList());
+
+        // Read the real computed ACRA due date first (rather than hand-computing the recurrence
+        // rule again here), the same date a real frontend would send back in a dismiss request.
+        LocalDate acraDueDate = deadlinesBody(controller.getDeadlines(1L, currentUser)).stream()
+                .filter(d -> d.getObligationType() == ObligationType.ACRA_ANNUAL_RETURN)
+                .findFirst().orElseThrow().getDueDate();
+
+        DismissedDeadline dismissed = new DismissedDeadline();
+        dismissed.setBusiness(business);
+        dismissed.setObligationType(ObligationType.ACRA_ANNUAL_RETURN);
+        dismissed.setDueDate(acraDueDate);
+        when(dismissedDeadlineRepository.findByBusinessId(1L)).thenReturn(List.of(dismissed));
+
+        ResponseEntity<?> response = controller.getDeadlines(1L, currentUser);
+
+        assertTrue(deadlinesBody(response).stream()
+                .noneMatch(d -> d.getObligationType() == ObligationType.ACRA_ANNUAL_RETURN));
     }
 
     // Note on issue #66's IDOR (a client supplying their own "id" so JPA's save() does an

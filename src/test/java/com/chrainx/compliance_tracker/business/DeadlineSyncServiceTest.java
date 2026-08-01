@@ -23,10 +23,12 @@ class DeadlineSyncServiceTest {
     private final WorkPassRepository workPassRepository = mock(WorkPassRepository.class);
     private final CustomObligationRepository customObligationRepository = mock(CustomObligationRepository.class);
     private final DeadlineRecordRepository deadlineRecordRepository = mock(DeadlineRecordRepository.class);
+    private final DismissedDeadlineRepository dismissedDeadlineRepository = mock(DismissedDeadlineRepository.class);
     private final RuleEngine ruleEngine = new RuleEngine();
 
     private final DeadlineSyncService service = new DeadlineSyncService(
-            businessRepository, workPassRepository, customObligationRepository, deadlineRecordRepository, ruleEngine);
+            businessRepository, workPassRepository, customObligationRepository, deadlineRecordRepository,
+            dismissedDeadlineRepository, ruleEngine);
 
     @Test
     void syncDeadlines_insertsNewRecord_whenNotAlreadyPersisted() {
@@ -136,5 +138,38 @@ class DeadlineSyncServiceTest {
         List<DeadlineRecord> result = service.findDueSoonAndUnreminded(LocalDate.of(2026, 7, 24));
 
         assertEquals(List.of(dueInThirtyDaysLongLead), result);
+    }
+
+    @Test
+    void findDueSoonAndUnreminded_excludesARecord_thatWasManuallyDismissed() {
+        // Issue #34: a manually dismissed deadline shouldn't still trigger an automated reminder
+        // - that's the whole point of dismissing it. Two otherwise-identical due-soon records,
+        // only one of which has a matching DismissedDeadline row.
+        Business business = new Business();
+        business.setId(1L);
+        business.setLeadTimeDays(14);
+
+        DeadlineRecord dismissedRecord = new DeadlineRecord();
+        dismissedRecord.setBusiness(business);
+        dismissedRecord.setObligationType(ObligationType.ACRA_ANNUAL_RETURN);
+        dismissedRecord.setDueDate(LocalDate.of(2026, 8, 1));
+
+        DeadlineRecord notDismissedRecord = new DeadlineRecord();
+        notDismissedRecord.setBusiness(business);
+        notDismissedRecord.setObligationType(ObligationType.GST_F5);
+        notDismissedRecord.setDueDate(LocalDate.of(2026, 8, 1));
+
+        when(deadlineRecordRepository.findByReminderSentFalse())
+                .thenReturn(List.of(dismissedRecord, notDismissedRecord));
+
+        DismissedDeadline dismissed = new DismissedDeadline();
+        dismissed.setBusiness(business);
+        dismissed.setObligationType(ObligationType.ACRA_ANNUAL_RETURN);
+        dismissed.setDueDate(LocalDate.of(2026, 8, 1));
+        when(dismissedDeadlineRepository.findAll()).thenReturn(List.of(dismissed));
+
+        List<DeadlineRecord> result = service.findDueSoonAndUnreminded(LocalDate.of(2026, 7, 24));
+
+        assertEquals(List.of(notDismissedRecord), result);
     }
 }
