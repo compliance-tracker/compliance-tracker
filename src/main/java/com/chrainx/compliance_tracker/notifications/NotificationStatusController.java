@@ -27,9 +27,10 @@ public class NotificationStatusController {
 
     @GetMapping("/status")
     public NotificationStatusResponse getStatus() {
-        if (!"email".equals(channel)) {
-            return NotificationStatusResponse.logging();
-        }
-        return NotificationStatusResponse.email(fromAddress);
+        return switch (channel) {
+            case "email" -> NotificationStatusResponse.email(fromAddress);
+            case "webhook" -> NotificationStatusResponse.webhook();
+            default -> NotificationStatusResponse.logging();
+        };
     }
 }

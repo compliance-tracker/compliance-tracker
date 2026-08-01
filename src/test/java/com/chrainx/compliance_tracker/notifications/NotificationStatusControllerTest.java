@@ -29,7 +29,20 @@ class NotificationStatusControllerTest {
     }
 
     @Test
-    void getStatus_treatsAnyNonEmailValue_asLogging() {
+    void getStatus_reportsWebhook_withNoUrlExposed() {
+        // Issue #62 - the real webhook URL is itself a bearer credential, deliberately never
+        // echoed back, same reasoning as never echoing spring.mail.* credentials for email.
+        NotificationStatusController controller =
+                new NotificationStatusController("webhook", "");
+
+        NotificationStatusResponse status = controller.getStatus();
+
+        assertEquals("webhook", status.channel());
+        assertNull(status.fromAddress());
+    }
+
+    @Test
+    void getStatus_treatsAnyNonEmailNonWebhookValue_asLogging() {
         // Same matchIfMissing-style reasoning as the @ConditionalOnProperty beans this mirrors
         // (LoggingNotificationSender/EmailNotificationSender) - anything other than exactly
         // "email" is the safe logging default, not just an unset property.

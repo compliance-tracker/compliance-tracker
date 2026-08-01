@@ -2,7 +2,6 @@ package com.chrainx.compliance_tracker.notifications;
 import com.chrainx.compliance_tracker.business.DeadlineRecord;
 import com.chrainx.compliance_tracker.business.Business;
 
-import com.chrainx.compliance_tracker.rules.ObligationType;
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,8 +11,6 @@ import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Component;
 
-import java.util.Map;
-
 // Real NotificationSender (issue #17), replacing the LoggingNotificationSender stand-in for
 // anyone who sets notifications.channel=email (see application.properties). Sends to the
 // business owner's own registered email (Business.owner.email) - the account holder is the one
@@ -22,12 +19,6 @@ import java.util.Map;
 @Component
 @ConditionalOnProperty(prefix = "notifications", name = "channel", havingValue = "email")
 public class EmailNotificationSender implements NotificationSender {
-
-    private static final Map<ObligationType, String> OBLIGATION_LABELS = Map.of(
-            ObligationType.ACRA_ANNUAL_RETURN, "ACRA Annual Return",
-            ObligationType.GST_F5, "GST F5 Filing",
-            ObligationType.WORK_PASS_RENEWAL, "Work Pass Renewal"
-    );
 
     private final JavaMailSender mailSender;
     private final String fromAddress;
@@ -40,11 +31,7 @@ public class EmailNotificationSender implements NotificationSender {
 
     @Override
     public void send(Business business, DeadlineRecord deadlineRecord) {
-        // Issue #59: a CUSTOM obligation has no fixed label to look up - its own customName is
-        // the real display text, set on the record at sync time from the obligation's own name.
-        String obligationLabel = deadlineRecord.getObligationType() == ObligationType.CUSTOM
-                ? deadlineRecord.getCustomName()
-                : OBLIGATION_LABELS.getOrDefault(deadlineRecord.getObligationType(), deadlineRecord.getObligationType().toString());
+        String obligationLabel = ObligationLabel.of(deadlineRecord);
 
         MimeMessage message = mailSender.createMimeMessage();
         try {

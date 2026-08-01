@@ -42,7 +42,7 @@ a single directory before this split (issue #90):
 | `config` | `SecurityConfig`, `CorsConfig`, `SchedulingConfig`, `SqsConfig`, `OpenApiConfig` (issue #21), `LoggingConfig` (issue #51) — cross-cutting `@Configuration` classes, not owned by any one feature |
 | `error` | `ApiError`, `GlobalExceptionHandler` — the consistent structured error response format (issue #47), also cross-cutting |
 | `logging` | `CorrelationIdFilter`, `CorrelationIdSupport` (issue #51) — request/scheduled-run correlation IDs, see "Request correlation IDs" below |
-| `notifications` | `NotificationSender` interface (reminders), `EmailNotificationSender`, `LoggingNotificationSender`; `AuthEmailSender` interface (password reset #37, email verification #36), `EmailAuthEmailSender`, `LoggingAuthEmailSender` |
+| `notifications` | `NotificationSender` interface (reminders), `EmailNotificationSender`, `LoggingNotificationSender`, `WebhookNotificationSender` (issue #62), `ObligationLabel` (shared display-text helper); `AuthEmailSender` interface (password reset #37, email verification #36), `EmailAuthEmailSender`, `LoggingAuthEmailSender` |
 | `queue` | `SqsDispatchService`, `ReminderWorkerService`, `ReminderMessage`, `DlqMonitorService` (issue #18) |
 | `rules` | Pure rules-engine logic (`RuleEngine`, `Deadline`, `ObligationType`) — predates this split, was already its own package |
 | `security` | `EncryptedStringConverter` (column-level AES-256-GCM encryption at rest), `EmailHasher` (deterministic HMAC-SHA256 lookup hash for `User.email`) — issue #63 |

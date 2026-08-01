@@ -7,7 +7,14 @@ in the reminder pipeline.
 The same `notifications.channel` setting controls both `NotificationSender` (reminders) and
 `AuthEmailSender` (password reset #37, email verification #36) — one switch, two independent
 interfaces (a reminder needs a `Business`/`DeadlineRecord`, an auth email just needs an email
-address and a token), each with its own logging-default/email-opt-in pair of implementations.
+address and a token). `NotificationSender` has three implementations (logging default, email,
+webhook — see below); `AuthEmailSender` only ever has two (logging default, email) — there's no
+sane way to deliver a password-reset link via a generic webhook, so `LoggingAuthEmailSender`
+stays the fallback for *any* non-`email` channel value, `notifications.channel=webhook` included.
+This isn't just a design note — it was a real bug found live (issue #62): `LoggingAuthEmailSender`
+used to only activate for the literal value `"logging"`, so setting `channel=webhook` left no
+`AuthEmailSender` bean at all and the whole app failed to start. Fixed via
+`@ConditionalOnExpression` instead of a literal `havingValue` match.
 
 Reminders (and reset emails) are just logged by default — nothing to configure, safe for CI/local
 dev. To actually send real emails instead:
@@ -40,6 +47,37 @@ server) and needs updating to the real deployed frontend URL once one exists, sa
 (`EmailTemplate`) loosely echoing the frontend's own teal/brass palette — deliberately
 table-based, inline-CSS-only HTML (no `<style>` block, no external assets), since most email
 clients (Outlook especially) strip or ignore anything else.
+
+## Webhook/Slack reminders (issue #62)
+
+A cheap alternative to email for anyone who'd rather see reminders land in a channel they already
+monitor. `WebhookNotificationSender` posts a plain `{"text": "..."}` JSON body — Slack's own
+incoming-webhook format, and one plenty of other tools (Mattermost, several generic "Slack-
+compatible" webhook receivers) accept too, so this isn't Slack-specific code, just a
+Slack-*shaped* request.
+
+```bash
+export WEBHOOK_URL=https://hooks.slack.com/services/T000/B000/xxxxxxxxxxxxxxxxxxxxxxxx
+export NOTIFICATIONS_CHANNEL=webhook
+./mvnw spring-boot:run
+```
+
+To get a real Slack incoming-webhook URL: a Slack workspace admin creates one at
+[api.slack.com/apps](https://api.slack.com/apps) → "Incoming Webhooks" → "Add New Webhook to
+Workspace", picks a channel, and copies the generated URL. Treat it as a secret — anyone with the
+URL can post to that channel, no further auth needed, which is also why `GET
+/api/notifications/status` never echoes it back (see below), the same reasoning it never echoes
+`spring.mail.*` credentials for the email channel either.
+
+The app **fails fast at startup**, not on the first real reminder, if `notifications.channel=webhook`
+is set with no `notifications.webhook-url` configured — a blank URL would otherwise surface as a
+confusing connection error deep inside the reminder worker's own retry logic instead of an
+obvious, immediate config error.
+
+Password reset and email verification still just log (via `LoggingAuthEmailSender`) when
+`channel=webhook` — there's no webhook equivalent for those, by design, and both interfaces share
+the one `notifications.channel` switch (see above), so there's no separate setting to make auth
+emails go somewhere else while reminders go to a webhook.
 
 ## Previewing emails locally without a real account (Mailpit)
 
@@ -74,6 +112,12 @@ or the process's env vars directly:
 ```json
 { "channel": "email", "fromAddress": "reminders@yourdomain.com" }
 ```
+```json
+{ "channel": "webhook" }
+```
+
+The webhook channel's response deliberately carries no URL field at all — unlike `fromAddress`
+(an identifier, safe to show), a webhook URL *is* the credential.
 
 Deliberately just current config, not a "recently sent" history — that would need persisting a
 send log somewhere, a bigger feature not requested here. Built for the frontend's Notifications
