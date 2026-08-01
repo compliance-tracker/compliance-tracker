@@ -183,6 +183,33 @@ public class BusinessController {
         return ResponseEntity.ok(visible);
     }
 
+    // Issue #57: every DeadlineRecord this app has ever persisted for the business, past and
+    // future - the real historical audit trail. Distinct from getDeadlines above, which only
+    // ever shows a recurring obligation's *next* live-computed occurrence; a past year's ACRA
+    // filing has no other way to still be visible once RuleEngine has moved on to computing
+    // next year's. Paginated (issue #49's convention) since, unlike the live view, this table
+    // only grows over time.
+    @GetMapping("/{id}/deadlines/history")
+    public ResponseEntity<?> getDeadlineHistory(@PathVariable Long id, @AuthenticationPrincipal User currentUser,
+                                                 @RequestParam(defaultValue = "0") int page,
+                                                 @RequestParam(defaultValue = "20") int size) {
+        Optional<Business> business = businessRepository.findByIdAndOwnerId(id, currentUser.getId());
+        if (business.isEmpty()) {
+            return ResponseEntity.status(404).body(new ApiError("NOT_FOUND", "Business not found."));
+        }
+
+        Set<DismissedDeadlineKey> dismissed = dismissedDeadlineRepository.findByBusinessId(id).stream()
+                .map(DismissedDeadlineKey::of)
+                .collect(Collectors.toSet());
+
+        Page<DeadlineRecord> records = deadlineRecordRepository.findByBusinessIdOrderByDueDateDesc(
+                id, PageResponse.pageable(page, size));
+        Page<DeadlineHistoryEntryResponse> history = records.map(record ->
+                DeadlineHistoryEntryResponse.from(record, dismissed.contains(DismissedDeadlineKey.of(id, record))));
+
+        return ResponseEntity.ok(PageResponse.from(history));
+    }
+
     // Applies a BusinessRequest's fields onto the already-owned, already-persisted entity
     // fetched via findByIdAndOwnerId - same structural IDOR-avoidance as createBusiness above,
     // there's no id/owner field on the request DTO for a client to even supply.

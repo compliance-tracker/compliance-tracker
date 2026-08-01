@@ -1,6 +1,8 @@
 package com.chrainx.compliance_tracker.business;
 
 import com.chrainx.compliance_tracker.rules.ObligationType;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.time.LocalDate;
@@ -42,4 +44,12 @@ public interface DeadlineRecordRepository extends JpaRepository<DeadlineRecord, 
     // around, and the next sync's dedupe check (existsByCustomObligationIdAndDueDate) would
     // insert the new one alongside it rather than replacing it.
     void deleteByCustomObligationIdAndReminderSentFalse(Long customObligationId);
+
+    // Issue #57: every record this app has ever persisted for a business, past and future,
+    // reminded and not - the actual historical audit trail. Unlike GET /businesses/{id}/deadlines
+    // (which only ever shows a recurring obligation's *next* occurrence, since RuleEngine
+    // computes forward from "today"), this surfaces every past occurrence a sync run ever
+    // persisted a real row for. Newest-due-date-first, matching "what did we file, most
+    // recently" being the natural first question to ask.
+    Page<DeadlineRecord> findByBusinessIdOrderByDueDateDesc(Long businessId, Pageable pageable);
 }

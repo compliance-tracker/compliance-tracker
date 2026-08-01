@@ -540,4 +540,62 @@ class BusinessIntegrationTest {
                 .noneMatch(b -> secondPage.content().stream().anyMatch(b2 -> b2.id().equals(b.id()))),
                 "the two pages must not overlap");
     }
+
+    private PageResponse<DeadlineHistoryEntryResponse> getDeadlineHistory(Long businessId, HttpHeaders headers) {
+        ResponseEntity<PageResponse<DeadlineHistoryEntryResponse>> response = restTemplate.exchange(
+                "/api/businesses/" + businessId + "/deadlines/history", HttpMethod.GET, new HttpEntity<>(headers),
+                new org.springframework.core.ParameterizedTypeReference<PageResponse<DeadlineHistoryEntryResponse>>() {});
+        return response.getBody();
+    }
+
+    @Test
+    void getDeadlineHistory_showsARealSyncedRecord_withItsReminderSentStatus() {
+        // Issue #57: real proof that a real DeadlineRecord (persisted by the real sync job, not
+        // hand-constructed) actually shows up in the history endpoint with its real fields.
+        HttpHeaders headers = authHeaders(registerAndGetToken());
+        Long businessId = createBusiness(headers, "Deadline History E2E Test Co");
+
+        deadlineSyncService.syncDeadlines();
+
+        PageResponse<DeadlineHistoryEntryResponse> history = getDeadlineHistory(businessId, headers);
+
+        assertTrue(history.content().stream()
+                .anyMatch(e -> e.obligationType() == com.chrainx.compliance_tracker.rules.ObligationType.ACRA_ANNUAL_RETURN
+                        && !e.reminderSent() && !e.dismissed()));
+    }
+
+    @Test
+    void getDeadlineHistory_marksARecord_asDismissed_afterARealDismissCall() {
+        HttpHeaders headers = authHeaders(registerAndGetToken());
+        Long businessId = createBusiness(headers, "Deadline History Dismiss E2E Test Co");
+        deadlineSyncService.syncDeadlines();
+
+        String acraDueDate = getDeadlineHistory(businessId, headers).content().stream()
+                .filter(e -> e.obligationType() == com.chrainx.compliance_tracker.rules.ObligationType.ACRA_ANNUAL_RETURN)
+                .findFirst().orElseThrow().dueDate().toString();
+
+        restTemplate.postForEntity(
+                "/api/businesses/" + businessId + "/deadlines/dismiss",
+                new HttpEntity<>(new DismissDeadlineRequest(
+                        com.chrainx.compliance_tracker.rules.ObligationType.ACRA_ANNUAL_RETURN,
+                        LocalDate.parse(acraDueDate), null, null), headers),
+                DismissedDeadlineResponse.class);
+
+        PageResponse<DeadlineHistoryEntryResponse> history = getDeadlineHistory(businessId, headers);
+        assertTrue(history.content().stream()
+                .anyMatch(e -> e.obligationType() == com.chrainx.compliance_tracker.rules.ObligationType.ACRA_ANNUAL_RETURN
+                        && e.dismissed()));
+    }
+
+    @Test
+    void getDeadlineHistory_forAnotherUsersBusiness_isRejectedWith404() {
+        HttpHeaders headersA = authHeaders(registerAndGetToken());
+        Long businessAId = createBusiness(headersA, "History Owner A Co");
+
+        HttpHeaders headersB = authHeaders(registerAndGetToken());
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/businesses/" + businessAId + "/deadlines/history", HttpMethod.GET, new HttpEntity<>(headersB), String.class);
+
+        assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
+    }
 }
