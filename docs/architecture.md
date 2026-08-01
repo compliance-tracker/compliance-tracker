@@ -38,7 +38,7 @@ a single directory before this split (issue #90):
 | Package | Contents |
 |---|---|
 | `auth` | `AuthController`/`AuthRequest`/`AuthResponse`, `JwtService`, `JwtAuthenticationFilter`, `LoginRateLimiter`, `TokenBlocklist`, `User`, `UserRepository`, `PasswordResetToken`/`PasswordResetTokenRepository`, `ForgotPasswordRequest`/`ResetPasswordRequest`, `EmailVerificationToken`/`EmailVerificationTokenRepository`, `VerifyEmailRequest` |
-| `business` | `Business`/`BusinessRequest`/`BusinessResponse`/`BusinessController`/`BusinessRepository`, `WorkPass`/`WorkPassRequest`/`WorkPassResponse`/`WorkPassController`/`WorkPassRepository`, `CustomObligation`/`CustomObligationRequest`/`CustomObligationResponse`/`CustomObligationController`/`CustomObligationRepository` (issue #59), `DeadlineRecord`/`DeadlineRecordRepository`, `DismissedDeadline`/`DismissedDeadlineKey`/`DismissedDeadlineRepository`/`DismissDeadlineRequest`/`DismissedDeadlineResponse`/`DeadlineDismissalController` (issue #34), `DeadlineSyncService`, `IdempotencyKey`/`IdempotencyKeyRepository`, `PageResponse` (pagination, issue #49) |
+| `business` | `Business`/`BusinessRequest`/`BusinessResponse`/`BusinessController`/`BusinessRepository`, `WorkPass`/`WorkPassRequest`/`WorkPassResponse`/`WorkPassController`/`WorkPassRepository`, `CustomObligation`/`CustomObligationRequest`/`CustomObligationResponse`/`CustomObligationController`/`CustomObligationRepository` (issue #59), `DeadlineRecord`/`DeadlineRecordRepository`, `DeadlineHistoryEntryResponse` (issue #57), `DismissedDeadline`/`DismissedDeadlineKey`/`DismissedDeadlineRepository`/`DismissDeadlineRequest`/`DismissedDeadlineResponse`/`DeadlineDismissalController` (issue #34), `DeadlineSyncService`, `IdempotencyKey`/`IdempotencyKeyRepository`, `PageResponse` (pagination, issue #49) |
 | `config` | `SecurityConfig`, `CorsConfig`, `SchedulingConfig`, `SqsConfig`, `OpenApiConfig` (issue #21), `LoggingConfig` (issue #51) — cross-cutting `@Configuration` classes, not owned by any one feature |
 | `error` | `ApiError`, `GlobalExceptionHandler` — the consistent structured error response format (issue #47), also cross-cutting |
 | `logging` | `CorrelationIdFilter`, `CorrelationIdSupport` (issue #51) — request/scheduled-run correlation IDs, see "Request correlation IDs" below |
@@ -275,6 +275,16 @@ wraps around the delegation to its private impl, not the other way around.
   (issue #34), so it's `@Transactional(readOnly = true)`: `Business` is a
   lazy relationship on `DeadlineRecord`, and reading `leadTimeDays` off it during the filtering
   needs the Hibernate session kept open past the initial repository call.
+- **`GET /businesses/{id}/deadlines/history`** (issue #57) — reuses `DeadlineRecordRepository`
+  directly (a new `findByBusinessIdOrderByDueDateDesc`, paginated per issue #49's convention,
+  since unlike the live `deadlines` endpoint this table only grows) rather than adding a separate
+  history-specific persistence layer. The real gap this closes: `RuleEngine` only ever computes a
+  recurring obligation's *next* occurrence, so a past year's ACRA filing has no other way to stay
+  visible once the live view has moved on to computing next year's — `DeadlineRecord` already
+  persists every occurrence a sync run ever processed, this endpoint is just exposing what
+  already exists. Each `DeadlineHistoryEntryResponse` also carries `dismissed`, computed the same
+  `DismissedDeadlineKey` set-membership way `getDeadlines` already does, since a record can be
+  manually dismissed either before or after an automated reminder went out for it.
 - **`SqsConfig`** — `@Configuration` producing a single `SqsClient` `@Bean`. When
   `aws.sqs.endpoint` is set (local dev), it points the client at LocalStack with throwaway
   credentials; when unset (real AWS deployment), it falls back to the SDK's default credential

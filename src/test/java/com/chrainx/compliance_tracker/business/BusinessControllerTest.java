@@ -152,6 +152,77 @@ class BusinessControllerTest {
                 .noneMatch(d -> d.getObligationType() == ObligationType.ACRA_ANNUAL_RETURN));
     }
 
+    @SuppressWarnings("unchecked")
+    private PageResponse<DeadlineHistoryEntryResponse> historyBody(ResponseEntity<?> response) {
+        return (PageResponse<DeadlineHistoryEntryResponse>) response.getBody();
+    }
+
+    @Test
+    void getDeadlineHistory_returnsEveryPersistedRecord_pastAndFuture() {
+        Business business = new Business();
+        business.setId(1L);
+
+        DeadlineRecord past = new DeadlineRecord();
+        past.setId(1L);
+        past.setObligationType(ObligationType.ACRA_ANNUAL_RETURN);
+        past.setDueDate(LocalDate.of(2025, 7, 31));
+        past.setReminderSent(true);
+
+        DeadlineRecord future = new DeadlineRecord();
+        future.setId(2L);
+        future.setObligationType(ObligationType.ACRA_ANNUAL_RETURN);
+        future.setDueDate(LocalDate.of(2027, 7, 31));
+        future.setReminderSent(false);
+
+        when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(business));
+        when(deadlineRecordRepository.findByBusinessIdOrderByDueDateDesc(eq(1L), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(future, past)));
+
+        ResponseEntity<?> response = controller.getDeadlineHistory(1L, currentUser, 0, 20);
+
+        assertEquals(200, response.getStatusCode().value());
+        List<DeadlineHistoryEntryResponse> content = historyBody(response).content();
+        assertEquals(2, content.size());
+        assertTrue(content.stream().anyMatch(e -> e.dueDate().equals(LocalDate.of(2025, 7, 31)) && e.reminderSent()));
+        assertTrue(content.stream().anyMatch(e -> e.dueDate().equals(LocalDate.of(2027, 7, 31)) && !e.reminderSent()));
+    }
+
+    @Test
+    void getDeadlineHistory_marksARecord_asDismissed_whenItMatchesADismissedDeadline() {
+        Business business = new Business();
+        business.setId(1L);
+
+        DeadlineRecord record = new DeadlineRecord();
+        record.setId(1L);
+        record.setBusiness(business);
+        record.setObligationType(ObligationType.GST_F5);
+        record.setDueDate(LocalDate.of(2026, 10, 30));
+        record.setReminderSent(false);
+
+        DismissedDeadline dismissed = new DismissedDeadline();
+        dismissed.setBusiness(business);
+        dismissed.setObligationType(ObligationType.GST_F5);
+        dismissed.setDueDate(LocalDate.of(2026, 10, 30));
+
+        when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.of(business));
+        when(deadlineRecordRepository.findByBusinessIdOrderByDueDateDesc(eq(1L), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(record)));
+        when(dismissedDeadlineRepository.findByBusinessId(1L)).thenReturn(List.of(dismissed));
+
+        ResponseEntity<?> response = controller.getDeadlineHistory(1L, currentUser, 0, 20);
+
+        assertTrue(historyBody(response).content().get(0).dismissed());
+    }
+
+    @Test
+    void getDeadlineHistory_returns404_whenBusinessBelongsToAnotherUser() {
+        when(businessRepository.findByIdAndOwnerId(1L, 1L)).thenReturn(Optional.empty());
+
+        ResponseEntity<?> response = controller.getDeadlineHistory(1L, currentUser, 0, 20);
+
+        assertEquals(404, response.getStatusCode().value());
+    }
+
     // Note on issue #66's IDOR (a client supplying their own "id" so JPA's save() does an
     // UPDATE instead of an INSERT): the tests that used to prove createBusiness/updateBusiness
     // clear a client-supplied id no longer make sense as written, and were removed rather than
