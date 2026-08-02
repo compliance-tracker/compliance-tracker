@@ -130,6 +130,19 @@ class CustomObligationIntegrationTest {
     }
 
     @Test
+    void createCustomObligation_withAnExcessivelyLongName_isRejectedWith400() {
+        HttpHeaders headers = authHeaders(registerAndGetToken());
+        Long businessId = createBusiness(headers);
+
+        CustomObligationRequest request = new CustomObligationRequest("A".repeat(256), LocalDate.of(2026, 9, 1), null);
+
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                "/api/businesses/" + businessId + "/custom-obligations", new HttpEntity<>(request, headers), String.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    }
+
+    @Test
     void updateCustomObligation_changesItsFields() {
         HttpHeaders headers = authHeaders(registerAndGetToken());
         Long businessId = createBusiness(headers);

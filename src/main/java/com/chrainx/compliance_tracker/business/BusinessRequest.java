@@ -5,6 +5,7 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 
 import java.time.LocalDate;
 
@@ -32,8 +33,12 @@ import java.time.LocalDate;
 // BusinessController defaults it to QUARTERLY (the pre-existing behavior) on create when omitted,
 // and preserves the existing value on update when omitted, rather than forcing every client to
 // always supply it.
+// @Size(max = 255) on name: found live that nothing bounded this at all before - a 10,000
+// character name was accepted with a 200. 255 is a generous, deliberately round bound for a
+// business name, not tied to any DB column width (name is AES-GCM-encrypted, stored as
+// unbounded TEXT - Postgres itself would never reject a long value the way a VARCHAR(255) would).
 public record BusinessRequest(
-        @NotBlank String name,
+        @NotBlank @Size(max = 255) String name,
         @NotNull LocalDate financialYearEnd,
         boolean gstRegistered,
         @Min(1) @Max(90) Integer leadTimeDays,
