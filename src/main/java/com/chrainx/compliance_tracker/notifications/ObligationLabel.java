@@ -15,7 +15,8 @@ public final class ObligationLabel {
     private static final Map<ObligationType, String> LABELS = Map.of(
             ObligationType.ACRA_ANNUAL_RETURN, "ACRA Annual Return",
             ObligationType.GST_F5, "GST F5 Filing",
-            ObligationType.WORK_PASS_RENEWAL, "Work Pass Renewal"
+            ObligationType.WORK_PASS_RENEWAL, "Work Pass Renewal",
+            ObligationType.CORPORATE_INCOME_TAX, "Corporate Income Tax Filing"
     );
 
     private ObligationLabel() {

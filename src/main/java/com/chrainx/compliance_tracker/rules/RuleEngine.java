@@ -44,6 +44,18 @@ public class RuleEngine {
                 nextAcraDeadline(business.getFinancialYearEnd(), referenceDate)
         ));
 
+        // Corporate income tax (Form C-S/C-S (Lite)/C) rule: every company must file, due
+        // 30 November of the Year of Assessment, unconditionally (not gated on anything the way
+        // GST is on registration status - same footing as ACRA). YA = the calendar year after
+        // the one the company's financial year end falls in, regardless of which month that FYE
+        // itself is in (IRAS runs a preceding-year basis) - so the *first* YA 30 Nov deadline is
+        // always financialYearEnd's own year + 1, then nextCorporateTaxDeadline rolls it forward
+        // a year at a time exactly like nextAcraDeadline does for ACRA.
+        deadlines.add(new Deadline(
+                ObligationType.CORPORATE_INCOME_TAX,
+                nextCorporateTaxDeadline(business.getFinancialYearEnd(), referenceDate)
+        ));
+
         // GST F5 rule only applies if the business is actually GST-registered. Due date is
         // always exactly one month after the end of the accounting period, regardless of
         // frequency (issue #45) - only which period's end date to use differs.
@@ -63,7 +75,8 @@ public class RuleEngine {
         for (WorkPass pass : workPasses) {
             deadlines.add(new Deadline(
                     ObligationType.WORK_PASS_RENEWAL,
-                    pass.getExpiryDate()
+                    pass.getExpiryDate(),
+                    pass.getPassType()
             ));
         }
 
@@ -90,6 +103,19 @@ public class RuleEngine {
     // this naturally rolls forward to next year's instead of forever returning the same date.
     private LocalDate nextAcraDeadline(LocalDate financialYearEnd, LocalDate referenceDate) {
         LocalDate deadline = financialYearEnd.plusMonths(7);
+        while (deadline.isBefore(referenceDate)) {
+            deadline = deadline.plusYears(1);
+        }
+        return deadline;
+    }
+
+    // Issue #33: 30 November of (financialYearEnd's own year + 1) is the *first* occurrence of
+    // the Form C-S/C-S (Lite)/C deadline that FYE produces (the preceding-year-basis Year of
+    // Assessment rule - see README's Compliance rules table for the sourced explanation); the
+    // same roll-forward-a-year-at-a-time pattern nextAcraDeadline uses then finds the next one
+    // that hasn't passed yet relative to referenceDate.
+    private LocalDate nextCorporateTaxDeadline(LocalDate financialYearEnd, LocalDate referenceDate) {
+        LocalDate deadline = LocalDate.of(financialYearEnd.getYear() + 1, 11, 30);
         while (deadline.isBefore(referenceDate)) {
             deadline = deadline.plusYears(1);
         }

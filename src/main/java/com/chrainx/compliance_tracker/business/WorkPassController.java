@@ -2,6 +2,7 @@ package com.chrainx.compliance_tracker.business;
 import com.chrainx.compliance_tracker.auth.User;
 
 import com.chrainx.compliance_tracker.error.ApiError;
+import com.chrainx.compliance_tracker.rules.WorkPassType;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -44,6 +45,7 @@ public class WorkPassController {
         WorkPass workPass = new WorkPass();
         workPass.setEmployeeName(request.employeeName());
         workPass.setExpiryDate(request.expiryDate());
+        workPass.setPassType(request.passType() != null ? request.passType() : WorkPassType.EMPLOYMENT_PASS);
         workPass.setBusiness(business.get());
         return ResponseEntity.ok(WorkPassResponse.from(workPassRepository.save(workPass)));
     }
