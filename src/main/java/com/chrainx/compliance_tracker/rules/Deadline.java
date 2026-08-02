@@ -13,16 +13,32 @@ public class Deadline {
     // built-in types' (business, obligationType, dueDate) key can't distinguish.
     private final String customName;
     private final Long customObligationId;
+    // Only set for ObligationType.WORK_PASS_RENEWAL (issue #32) - which real MOM pass this
+    // deadline is for, so a caller can show "S Pass renewal" instead of a generic label. Not
+    // threaded any further than this live view (DeadlineRecord/notifications stay untouched,
+    // deliberately - see WorkPass.passType's own comment for why the renewal deadline formula
+    // itself doesn't need to branch by type at all).
+    private final WorkPassType workPassType;
 
     public Deadline(ObligationType obligationType, LocalDate dueDate) {
-        this(obligationType, dueDate, null, null);
+        this(obligationType, dueDate, null, null, null);
+    }
+
+    public Deadline(ObligationType obligationType, LocalDate dueDate, WorkPassType workPassType) {
+        this(obligationType, dueDate, null, null, workPassType);
     }
 
     public Deadline(ObligationType obligationType, LocalDate dueDate, String customName, Long customObligationId) {
+        this(obligationType, dueDate, customName, customObligationId, null);
+    }
+
+    private Deadline(ObligationType obligationType, LocalDate dueDate, String customName, Long customObligationId,
+                      WorkPassType workPassType) {
         this.obligationType = obligationType;
         this.dueDate = dueDate;
         this.customName = customName;
         this.customObligationId = customObligationId;
+        this.workPassType = workPassType;
     }
 
     public ObligationType getObligationType() {
@@ -39,5 +55,9 @@ public class Deadline {
 
     public Long getCustomObligationId() {
         return customObligationId;
+    }
+
+    public WorkPassType getWorkPassType() {
+        return workPassType;
     }
 }

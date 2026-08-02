@@ -8,6 +8,7 @@ import com.chrainx.compliance_tracker.auth.UserRepository;
 import com.chrainx.compliance_tracker.business.BusinessRepository;
 import com.chrainx.compliance_tracker.security.EmailHasher;
 
+import com.chrainx.compliance_tracker.rules.ObligationType;
 import com.chrainx.compliance_tracker.rules.RuleEngine;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -79,10 +80,17 @@ class ReminderWorkerIntegrationTest {
         sqsDispatchService.dispatchDueSoonDeadlines();
         reminderWorkerService.pollAndProcess();
 
+        // Issue #33 gave this business a second, unrelated deadline record (corporate income
+        // tax, due nowhere near "today") alongside the ACRA one this test actually drives
+        // through the pipeline - findAll() has no guaranteed row order (same gotcha already hit
+        // elsewhere in this codebase, see CLAUDE.md), so filtering on obligationType too is what
+        // actually picks the record this test means to assert on, not just "the business's
+        // first record, whichever that happens to be."
         Optional<DeadlineRecord> record = deadlineRecordRepository
                 .findAll()
                 .stream()
-                .filter(r -> r.getBusiness().getId().equals(business.getId()))
+                .filter(r -> r.getBusiness().getId().equals(business.getId())
+                        && r.getObligationType() == ObligationType.ACRA_ANNUAL_RETURN)
                 .findFirst();
 
         assertTrue(record.isPresent());

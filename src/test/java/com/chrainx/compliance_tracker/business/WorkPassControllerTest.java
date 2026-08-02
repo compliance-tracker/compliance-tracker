@@ -45,7 +45,7 @@ class WorkPassControllerTest {
         Business business = new Business();
         business.setId(10L);
 
-        WorkPassRequest request = new WorkPassRequest("Jane Doe", LocalDate.of(2026, 12, 31));
+        WorkPassRequest request = new WorkPassRequest("Jane Doe", LocalDate.of(2026, 12, 31), null);
 
         when(businessRepository.findByIdAndOwnerId(10L, 1L)).thenReturn(Optional.of(business));
         when(workPassRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -62,7 +62,7 @@ class WorkPassControllerTest {
         when(businessRepository.findByIdAndOwnerId(10L, 1L)).thenReturn(Optional.empty());
 
         ResponseEntity<?> response = controller.createWorkPass(
-                10L, new WorkPassRequest("Jane Doe", LocalDate.of(2026, 12, 31)), currentUser);
+                10L, new WorkPassRequest("Jane Doe", LocalDate.of(2026, 12, 31), null), currentUser);
 
         assertEquals(404, response.getStatusCode().value());
         verify(workPassRepository, never()).save(any());

@@ -838,7 +838,7 @@ class AuthIntegrationTest {
         restTemplate.postForEntity(
                 "/api/businesses/" + businessId + "/work-passes",
                 new HttpEntity<>(new com.chrainx.compliance_tracker.business.WorkPassRequest(
-                        "Jane Doe", java.time.LocalDate.of(2027, 6, 1)), headersA),
+                        "Jane Doe", java.time.LocalDate.of(2027, 6, 1), null), headersA),
                 com.chrainx.compliance_tracker.business.WorkPassResponse.class);
         restTemplate.postForEntity(
                 "/api/businesses/" + businessId + "/custom-obligations",
@@ -884,7 +884,7 @@ class AuthIntegrationTest {
         restTemplate.postForEntity(
                 "/api/businesses/" + businessId + "/work-passes",
                 new HttpEntity<>(new com.chrainx.compliance_tracker.business.WorkPassRequest(
-                        "John Doe", java.time.LocalDate.of(2027, 6, 1)), headers),
+                        "John Doe", java.time.LocalDate.of(2027, 6, 1), null), headers),
                 com.chrainx.compliance_tracker.business.WorkPassResponse.class);
 
         ResponseEntity<Void> deleteResponse = restTemplate.exchange(

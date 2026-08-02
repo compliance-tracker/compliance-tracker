@@ -67,6 +67,55 @@ class RuleEngineTest {
     }
 
     @Test
+    void computesCorporateIncomeTaxDeadline_30NovemberOfTheYearAfterFinancialYearEnd() {
+        // Issue #33: sourced from IRAS's preceding-year-basis Year of Assessment rule - a
+        // company's Form C-S/C-S (Lite)/C for YA N covers the financial year ending in N-1,
+        // regardless of which month that FYE itself falls in, and is due 30 November of YA N.
+        Business business = new Business();
+        business.setFinancialYearEnd(LocalDate.of(2026, 3, 31));
+        business.setGstRegistered(false);
+
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, Collections.emptyList(), Collections.emptyList(), LocalDate.of(2026, 1, 1));
+
+        Deadline corporateTax = deadlines.stream()
+                .filter(d -> d.getObligationType() == ObligationType.CORPORATE_INCOME_TAX)
+                .findFirst()
+                .orElseThrow();
+
+        assertEquals(LocalDate.of(2027, 11, 30), corporateTax.getDueDate());
+    }
+
+    @Test
+    void corporateIncomeTaxDeadline_rollsForwardToNextYear_oncePassed() {
+        Business business = new Business();
+        business.setFinancialYearEnd(LocalDate.of(2024, 12, 31)); // first deadline: 2025-11-30
+        business.setGstRegistered(false);
+
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, Collections.emptyList(), Collections.emptyList(), LocalDate.of(2026, 1, 1));
+
+        Deadline corporateTax = deadlines.stream()
+                .filter(d -> d.getObligationType() == ObligationType.CORPORATE_INCOME_TAX)
+                .findFirst()
+                .orElseThrow();
+
+        // 2025-11-30 already passed by 2026-01-01, so the next occurrence is 2026-11-30.
+        assertEquals(LocalDate.of(2026, 11, 30), corporateTax.getDueDate());
+    }
+
+    @Test
+    void corporateIncomeTaxDeadline_appliesUnconditionally_unlikeGst() {
+        // Unlike GST F5 (gated on gstRegistered), every company must file Form C-S/C-S
+        // (Lite)/C regardless of registration status - same footing as ACRA.
+        Business business = new Business();
+        business.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
+        business.setGstRegistered(false);
+
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(business, Collections.emptyList(), Collections.emptyList(), LocalDate.of(2026, 1, 1));
+
+        assertTrue(deadlines.stream().anyMatch(d -> d.getObligationType() == ObligationType.CORPORATE_INCOME_TAX));
+    }
+
+    @Test
     void acraDeadline_rollsForwardMultipleYears_ifFinancialYearEndIsOld() {
         Business business = new Business();
         business.setFinancialYearEnd(LocalDate.of(2020, 12, 31)); // deadline: 2021-07-31
@@ -178,6 +227,43 @@ class RuleEngineTest {
         assertEquals(2, workPassDueDates.size());
         assertTrue(workPassDueDates.contains(LocalDate.of(2026, 9, 1)));
         assertTrue(workPassDueDates.contains(LocalDate.of(2027, 3, 15)));
+    }
+
+    @Test
+    void workPassDeadline_carriesItsOwnPassType() {
+        // Issue #32: S Pass and Work Permit renewal deadlines use the exact same formula as
+        // Employment Pass (= expiryDate, sourced from the real MOM renew-a-pass pages for all
+        // three - see README's Compliance rules table) - the only thing that actually differs is
+        // which real pass this is, which the live deadlines view needs to be able to show.
+        Business business = new Business();
+        business.setFinancialYearEnd(LocalDate.of(2026, 12, 31));
+        business.setGstRegistered(false);
+
+        WorkPass sPass = new WorkPass();
+        sPass.setExpiryDate(LocalDate.of(2026, 9, 1));
+        sPass.setPassType(WorkPassType.S_PASS);
+
+        WorkPass workPermit = new WorkPass();
+        workPermit.setExpiryDate(LocalDate.of(2026, 10, 1));
+        workPermit.setPassType(WorkPassType.WORK_PERMIT);
+
+        WorkPass defaulted = new WorkPass();
+        defaulted.setExpiryDate(LocalDate.of(2026, 11, 1));
+
+        List<Deadline> deadlines = ruleEngine.computeDeadlines(
+                business, List.of(sPass, workPermit, defaulted), Collections.emptyList(), LocalDate.of(2026, 2, 15));
+
+        List<Deadline> workPassDeadlines = deadlines.stream()
+                .filter(d -> d.getObligationType() == ObligationType.WORK_PASS_RENEWAL)
+                .toList();
+
+        assertEquals(WorkPassType.S_PASS, findByDueDate(workPassDeadlines, LocalDate.of(2026, 9, 1)).getWorkPassType());
+        assertEquals(WorkPassType.WORK_PERMIT, findByDueDate(workPassDeadlines, LocalDate.of(2026, 10, 1)).getWorkPassType());
+        assertEquals(WorkPassType.EMPLOYMENT_PASS, findByDueDate(workPassDeadlines, LocalDate.of(2026, 11, 1)).getWorkPassType());
+    }
+
+    private Deadline findByDueDate(List<Deadline> deadlines, LocalDate dueDate) {
+        return deadlines.stream().filter(d -> d.getDueDate().equals(dueDate)).findFirst().orElseThrow();
     }
 
     // firstFinancialYearExceedsAcraLimit (issue #31) - sourced from Companies Act 1967 s.198 +

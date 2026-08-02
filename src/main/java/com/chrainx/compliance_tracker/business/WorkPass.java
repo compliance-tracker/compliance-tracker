@@ -1,5 +1,6 @@
 package com.chrainx.compliance_tracker.business;
 
+import com.chrainx.compliance_tracker.rules.WorkPassType;
 import com.chrainx.compliance_tracker.security.EncryptedStringConverter;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
@@ -25,6 +26,12 @@ public class WorkPass {
 
     private LocalDate expiryDate;
 
+    // Issue #32: which real MOM pass this is. Defaults to EMPLOYMENT_PASS - the only kind this
+    // app supported before this field existed - so every pre-existing row keeps meaning exactly
+    // what it always meant.
+    @Enumerated(EnumType.STRING)
+    private WorkPassType passType = WorkPassType.EMPLOYMENT_PASS;
+
     // Many WorkPass rows can point to the same Business (many-to-one).
     // FetchType.LAZY: don't load the related Business from the DB until .getBusiness() is
     // actually called - avoids pulling in data we don't need every time a WorkPass loads.
@@ -44,6 +51,9 @@ public class WorkPass {
 
     public LocalDate getExpiryDate() { return expiryDate; }
     public void setExpiryDate(LocalDate expiryDate) { this.expiryDate = expiryDate; }
+
+    public WorkPassType getPassType() { return passType; }
+    public void setPassType(WorkPassType passType) { this.passType = passType; }
 
     public Business getBusiness() { return business; }
     public void setBusiness(Business business) { this.business = business; }

@@ -44,8 +44,9 @@ class DeadlineSyncServiceTest {
 
         service.syncDeadlines();
 
-        // Only ACRA applies here (not GST-registered, no work passes) -> exactly one insert.
-        verify(deadlineRecordRepository, times(1)).save(any(DeadlineRecord.class));
+        // ACRA and corporate income tax both apply unconditionally (not GST-registered, no work
+        // passes) -> exactly two inserts (issue #33 added the second, previously this was one).
+        verify(deadlineRecordRepository, times(2)).save(any(DeadlineRecord.class));
     }
 
     @Test
