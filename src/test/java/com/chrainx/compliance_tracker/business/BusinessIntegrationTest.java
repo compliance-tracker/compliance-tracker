@@ -300,6 +300,19 @@ class BusinessIntegrationTest {
     }
 
     @Test
+    void createBusiness_withAnExcessivelyLongName_isRejectedWith400() {
+        // Found live: nothing bounded name's length at all before this - a 10,000 character
+        // name was silently accepted with a 200.
+        HttpHeaders headers = authHeaders(registerAndGetToken());
+        BusinessRequest request = new BusinessRequest("A".repeat(256), LocalDate.of(2026, 12, 31), false, null, null, null);
+
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                "/api/businesses", new HttpEntity<>(request, headers), String.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    }
+
+    @Test
     void createBusiness_withNullFinancialYearEnd_isRejectedWith400() {
         HttpHeaders headers = authHeaders(registerAndGetToken());
         BusinessRequest request = new BusinessRequest("Valid Name", null, false, null, null, null);

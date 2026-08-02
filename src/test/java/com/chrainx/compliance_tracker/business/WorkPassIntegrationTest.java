@@ -208,6 +208,19 @@ class WorkPassIntegrationTest {
     }
 
     @Test
+    void createWorkPass_withAnExcessivelyLongEmployeeName_isRejectedWith400() {
+        HttpHeaders headers = authHeaders(registerAndGetToken());
+        Long businessId = createBusiness(headers);
+
+        WorkPassRequest pass = new WorkPassRequest("A".repeat(256), LocalDate.of(2026, 11, 1), null);
+
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                "/api/businesses/" + businessId + "/work-passes", new HttpEntity<>(pass, headers), String.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    }
+
+    @Test
     void createWorkPass_withNullExpiryDate_isRejectedWith400() {
         HttpHeaders headers = authHeaders(registerAndGetToken());
         Long businessId = createBusiness(headers);

@@ -289,6 +289,47 @@ class AuthIntegrationTest {
     }
 
     @Test
+    void register_withAnEmptyEmail_isRejectedWith400_notAnUnhandled500() {
+        // Found live: an empty email previously sailed straight through to
+        // AuthEmailSender.sendVerificationEmail, which blew up building the actual email message
+        // - a genuine unhandled 500, not a clean validation rejection.
+        ResponseEntity<ApiError> response = restTemplate.postForEntity(
+                "/api/auth/register", new AuthRequest("", "a-real-password1"), ApiError.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    }
+
+    @Test
+    void register_withAMalformedEmail_isRejectedWith400() {
+        ResponseEntity<ApiError> response = restTemplate.postForEntity(
+                "/api/auth/register", new AuthRequest("not-an-email", "a-real-password1"), ApiError.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    }
+
+    @Test
+    void register_withAMalformedRequestBody_returnsTheAppsOwnErrorShape_notSpringsDefaultOne() {
+        // Regression test: a malformed literal (an unparseable date, here in a business create
+        // request) throws HttpMessageNotReadableException, which used to fall through to Spring
+        // Boot's own default /error handling - a different shape from this app's {error,
+        // message} ApiError convention, and one that leaked the real exception message.
+        String email = "auth-e2e-malformed-body-" + System.nanoTime() + "@example.com";
+        String token = registerVerifyAndLogin(email, "a-real-password1").token();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+        HttpEntity<String> request = new HttpEntity<>(
+                "{\"name\":\"Malformed Body Co\",\"financialYearEnd\":\"not-a-date\",\"gstRegistered\":false}", headers);
+
+        ResponseEntity<ApiError> response = restTemplate.postForEntity(
+                "/api/businesses", request, ApiError.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertEquals("BAD_REQUEST", response.getBody().error());
+        assertEquals("Malformed request body.", response.getBody().message());
+    }
+
+    @Test
     void concurrentRegistrations_forTheSameEmail_resolveToExactlyOneSuccess() throws Exception {
         // Regression test for issue #42: two real threads firing the same registration request
         // at genuinely the same instant, against real Postgres - not simulated via mocks. A

@@ -10,6 +10,7 @@ import com.chrainx.compliance_tracker.error.ApiError;
 import com.chrainx.compliance_tracker.notifications.AuthEmailSender;
 import com.chrainx.compliance_tracker.security.EmailHasher;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -83,7 +84,7 @@ public class AuthController {
     // test after adding @Transactional here, not assumed - removed it once the failure pointed
     // straight at the change. register doesn't need it anyway (no derived delete query here).
     @PostMapping("/register")
-    public ResponseEntity<?> register(@RequestBody AuthRequest request) {
+    public ResponseEntity<?> register(@Valid @RequestBody AuthRequest request) {
         if (isTooWeak(request.password())) {
             return ResponseEntity.status(400).body(new ApiError("BAD_REQUEST",
                     "Password must be at least 8 characters and include a letter and a digit."));
@@ -135,7 +136,7 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody AuthRequest request, HttpServletRequest httpRequest) {
+    public ResponseEntity<?> login(@Valid @RequestBody AuthRequest request, HttpServletRequest httpRequest) {
         String clientIp = httpRequest.getRemoteAddr();
 
         // Checked before touching the DB at all - once an IP has hit the limit, every further
