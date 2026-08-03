@@ -12,8 +12,8 @@ or, by default, just logged — see [docs/notifications.md](docs/notifications.m
 > official source before relying on a date.
 
 This is a portfolio project built to demonstrate backend engineering fundamentals — a rules
-engine, reliable job scheduling/dispatch, and cloud deployment — rather than a production
-business.
+engine, real regulatory sourcing, and reliable job scheduling/dispatch — rather than a production
+business. Real AWS deployment is deliberately deferred, not built (see Status below).
 
 ## Tech stack
 
@@ -150,5 +150,17 @@ behalf. Try-it-out against a real protected endpoint by registering/logging in v
 
 ## Status
 
-Actively in development. See [open issues](https://github.com/compliance-tracker/compliance-tracker/issues)
-for the current roadmap.
+Feature-complete for what this project set out to demonstrate. All five compliance obligations
+(ACRA Annual Return, GST F5, Employment Pass/S Pass/Work Permit renewal, corporate income tax)
+are implemented and sourced from real gov.sg/IRAS/MOM pages, reachable end to end via the REST
+API — not just modeled in the rules engine. The full reminder pipeline (scheduled sync → SQS
+dispatch → worker, idempotent, with dead-letter handling) is real and tested, including under
+genuine concurrency. Auth is JWT-based with email verification, password reset, rate limiting,
+and encryption at rest for sensitive fields (PDPA-researched, not invented). CI runs the full
+test suite plus JaCoCo coverage reporting on every push.
+
+**Deliberately not done**: real AWS deployment (issue #5) and load testing (#6) — not blocked on
+anything, a considered call not to spend money keeping infrastructure running for a project that
+already demonstrates everything it needs to without one (Fargate has no free tier, unlike RDS).
+See [open issues](https://github.com/compliance-tracker/compliance-tracker/issues) for anything
+still tracked.
